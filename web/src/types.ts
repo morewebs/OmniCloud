@@ -84,6 +84,8 @@ export interface AdapterInfo {
   key: string;
   display_name: string;
   capabilities: string[];
+  /** catalog providers only: 'live' | 'seeded' */
+  source?: 'live' | 'seeded';
 }
 
 export interface UserRow {
@@ -127,3 +129,51 @@ export const CAPABILITY_LABELS: Record<string, string> = {
   rebuild: 'Rebuild',
   delete: 'Delete',
 };
+
+// ---- v2: catalog + orders ----
+
+export interface IpOffer {
+  kind: string;
+  included: number;
+  price: Money | null;
+  limit: number | null;
+  note: string | null;
+}
+
+export interface Plan {
+  adapter: string;
+  name: string;
+  location: string;
+  cpu_cores: number | null;
+  cpu_arch: string | null;
+  ram_gb: number | null;
+  disk_gb: number | null;
+  disk_type: string | null;
+  price_monthly: Money | null;
+  price_hourly: Money | null;
+  included_traffic_bytes: number | null;
+  counting: TrafficCounting | null;
+  traffic_note?: string | null;
+  overage_price: Money | null;
+  extra_ip: IpOffer | null;
+  billing_model: string;
+  deprecated: boolean;
+}
+
+export interface OrderRow {
+  id: number;
+  mode: 'prototype' | 'real';
+  status: 'draft' | 'confirmed' | 'executing' | 'provisioned' | 'failed' | 'cancelled';
+  adapter: string;
+  account_id: number | null;
+  plan_name: string;
+  location: string;
+  options: string;      // JSON
+  plan_snapshot: string; // JSON
+  estimated_monthly: string; // JSON {amount, currency, partial}
+  resulting_provider_id: string | null;
+  requested_by: number;
+  username: string | null;
+  created_at: string;
+  updated_at: string;
+}

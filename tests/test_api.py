@@ -1,5 +1,6 @@
 """E2E-ish smoke: the whole stack over TestClient with a FakeAdapter."""
 import json
+import time
 
 import pytest
 from fastapi.testclient import TestClient
@@ -101,6 +102,100 @@ def test_missing_csrf_header_rejected(client):
     _admin(client)
     r = client.post("/api/auth/logout")  # no X-Requested-With
     assert r.status_code == 403
+
+
+def test_adapters_lists_fleet_and_catalog_providers(client):
+    """The Adapters view merges fleet adapters with catalog providers;
+    credentials views must offer only fleet adapters (source absent)."""
+    _admin(client)
+    r = client.get("/api/adapters")
+    assert r.status_code == 200
+    keys = {a["key"]: a for a in r.json()}
+    # fleet adapters carry capabilities and no catalog source
+    assert set(a["key"] for a in keys.values() if not a.get("source")) == {"fake"}
+    # all 5 catalog providers present with honest source labels
+    for key in ("hetzner", "leaseweb", "ovh", "gcore", "tube"):
+        assert keys[key]["source"] == "live"
+    for key in ("netlen", "lightnode"):
+        assert keys[key]["source"] == "seeded"
+    # no credential can be created for a catalog-only provider
+    r = client.post("/api/accounts", headers=HDRS,
+                    json={"adapter": "ovh", "name": "x", "token": TEST_TOKEN})
+    assert r.status_code == 400
+
+
+def test_orders_routes_full_flow(client):
+    """Order pipeline driven through HTTP: viewer blocked, draft->confirmed->
+    executing->provisioned with events, cancel rules, unknown plan 400s."""
+    _admin(client)
+    # seed the catalog so the order can validate against a real plan
+    from server import catalog as cat
+    from server.adapters.base import IpOffer, Money, Plan
+    cat.store("fake", [Plan(adapter="fake", name="plan-a", location="loc-1",
+                            price_monthly=Money(amount="10.00", currency="EUR"),
+                            extra_ip=IpOffer(kind="floating", included=1,
+                                             price=Money(amount="0.50",
+                                                         currency="EUR"),
+                                             limit=5),
+                            billing_model="monthly invoice")], "live", None)
+
+    r = client.post("/api/orders", headers=HDRS,
+                    json={"adapter": "fake", "plan_name": "plan-a",
+                          "location": "loc-1", "options": {"extra_ips": 2}})
+    assert r.status_code == 200
+    oid = r.json()["id"]
+    # unknown plan -> 400 with the OrderError message
+    r = client.post("/api/orders", headers=HDRS,
+                    json={"adapter": "fake", "plan_name": "nope",
+                          "location": "loc-1", "options": {}})
+    assert r.status_code == 400
+
+    # viewer cannot create or confirm orders
+    _viewer(client, "orderview")
+    r = client.post("/api/orders", headers=HDRS,
+                    json={"adapter": "fake", "plan_name": "plan-a",
+                          "location": "loc-1", "options": {}})
+    assert r.status_code == 403
+    r = client.post(f"/api/orders/{oid}/confirm", headers=HDRS)
+    assert r.status_code == 403
+    # but can watch the pipeline
+    assert client.get("/api/orders").status_code == 200
+    assert client.get(f"/api/orders/{oid}").status_code == 200
+
+    # back to admin: confirm + execute + wait for the prototype executor
+    client.post("/api/auth/logout", headers=HDRS)
+    client.post("/api/auth/login", json={"username": "admin", "password": "pw123456"},
+                headers=HDRS)
+    r = client.post(f"/api/orders/{oid}/confirm", headers=HDRS)
+    assert r.status_code == 200
+    # cancel after confirm is allowed; cancel after execute is not
+    oid2 = client.post("/api/orders", headers=HDRS,
+                       json={"adapter": "fake", "plan_name": "plan-a",
+                             "location": "loc-1", "options": {}}).json()["id"]
+    client.post(f"/api/orders/{oid2}/confirm", headers=HDRS)
+    assert client.post(f"/api/orders/{oid2}/cancel", headers=HDRS).status_code == 200
+    r = client.post(f"/api/orders/{oid}/execute", headers=HDRS)
+    assert r.status_code == 200
+    r = client.post(f"/api/orders/{oid}/cancel", headers=HDRS)
+    assert r.status_code == 409
+
+    deadline = time.monotonic() + 10
+    o = None
+    while time.monotonic() < deadline:
+        o = client.get(f"/api/orders/{oid}").json()
+        if o["status"] == "provisioned":
+            break
+        time.sleep(0.5)
+    assert o and o["status"] == "provisioned"
+    assert o["resulting_provider_id"] == f"proto-{oid}"
+    assert [e["status"] for e in o["events"]] == \
+        ["draft", "confirmed", "executing", "provisioned"]
+    # mode column visible through the API: this run is a prototype
+    assert o["mode"] == "prototype"
+    # fleet cache untouched: prototype orders never pollute servers
+    fleet = client.get("/api/fleet").json()
+    assert not any(s.get("provider_id", "").startswith("proto-")
+                   for a in fleet["accounts"] for s in a["servers"])
 
 
 def test_capabilities_409_for_absent(client, monkeypatch):

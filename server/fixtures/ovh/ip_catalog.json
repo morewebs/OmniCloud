@@ -1,0 +1,24 @@
+{
+  "catalogId": "ip-cat",
+  "locale": {"currencyCode": "EUR", "subsidiary": "FR", "taxRate": 20},
+  "plans": [
+    {
+      "planCode": "ip-failover-ripe",
+      "invoiceName": "[EUROPE] Additional IPv4 RIPE",
+      "pricings": [
+        {"phase": "renew", "capacities": ["renew"], "interval": 1,
+         "intervalUnit": "month", "price": 199000000, "formattedPrice": "1.99 €",
+         "tax": 20}
+      ]
+    },
+    {
+      "planCode": "ip-block-28-ripe",
+      "invoiceName": "Block /28",
+      "pricings": [
+        {"phase": "renew", "capacities": ["renew"], "interval": 1,
+         "intervalUnit": "month", "price": 3184000000, "formattedPrice": "31.84 €",
+         "tax": 20}
+      ]
+    }
+  ]
+}

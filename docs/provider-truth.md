@@ -5,6 +5,64 @@ documentation (not inferred from legacy scripts). Each claim cites its
 source. This file is the ground truth the adapters implement; when a
 legacy workspace script disagrees with this file, this file wins.
 
+## v2 catalog providers (verified 2026-10-03, all by direct unauthenticated curl)
+
+### OVHcloud - LIVE catalog (tokenless)
+- `GET https://eu.api.ovh.com/1.0/order/catalog/public/vps?ovhSubsidiary=FR` -
+  **noAuthentication: true** (per /1.0/order.json), verified by plain curl.
+  198 plans: planCode, invoiceName, pricings[] with **price in micro-cents**
+  (299000000 = 2.99 EUR), intervalUnit month, capacities installation/upgrade/
+  renew; configurations[] with vps_datacenter (GRA, SBG, BHS, WAW, DE, UK, SYD,
+  SGP + 2026/27 EU-SOUTH-MIL, EU-WEST-RBX, YNM). No 'Starter' family; current
+  families: vps-value/essential/comfort/elite/le + vps-2025/2027-modelN.
+  **No traffic field anywhere in the API** - marketing says unlimited traffic
+  with per-model bandwidth (500 Mbps-3 Gbps).
+- `GET /1.0/order/catalog/formatted/ip?ovhSubsidiary=FR` - Additional-IP
+  catalog, also tokenless: ip-failover-ripe/arin **1.99 EUR/IP/mo** (max qty
+  64); blocks /30-/24 7.96-509.44 EUR/mo. VPS constraint: individual IPs only,
+  **max 16 per VPS**; blocks NOT supported on VPS (Additional IP page).
+- Monthly rental billing only (1/12/24-mo terms with degressive discounts);
+  no hourly VPS. Full OVH fleet adapter deferred: 3-part credentials (AK/AS/CK).
+
+### Gcore - LIVE catalog (tokenless)
+- `GET https://api.gcore.com/cloud/public/v1/regions` (33 regions) and
+  `.../public/v1/basic_vms/flavors?region_id=` - public, no token.
+- Prices: `GET https://bff.gcore.pro/cloud/vcc-items?regionCode=` - the
+  pricing-calculator BFF, tokenless; per-minute USD. **Caveat: a BFF, not a
+  versioned API** - if it moves, prices degrade to not-published, never break.
+- Traffic: **free and unlimited, ingress AND egress** (docs). No byte number
+  exists to publish. Bandwidth capped by flavor.
+- Extra public IPv4: **$2.7504/mo**, uniform across 12 tested regions
+  ('externalip_min'). Bare-metal egress (the only traffic line item):
+  $0.00143/GB.
+- Billing: prepaid PAYG wallet, per-minute charging, ~4 USD deduction steps.
+
+### Tube-hosting - LIVE catalog (tokenless static asset)
+- `GET https://www.tube-hosting.com/assets/data/templates.json` - the exact
+  data their pricing page fetches: {"kvm": [{name, price, cores, ram, disk}],
+  "dedicated": ...}. Prices are **integer euro-cents** (500 = 5.00 EUR).
+  Caveat: static asset, not a versioned API. Traffic and extra-IP terms not
+  in the asset -> rendered not-published, verify at order time. NL-based KVM.
+
+### Netlen - SEEDED (API exists but gated)
+- Domain netlen.com.tr; public REST API v2 at api.netlen.com.tr/v2 (documented
+  at netlen.com.tr/api) covering servers/firewalls/IPs - **but every endpoint,
+  including GET /plans pricing, requires Bearer API key + IP allowlist**. Money
+  objects are {amount, currency} decimal strings; 202 + /operations/{id}
+  polling; Idempotency-Key on billing POSTs.
+- Istanbul VDS plans (Xeon Platinum, 10 Gbit/s port, "Limitsiz Trafik" =
+  unlimited traffic): VDS-1 $2.99, VDS-2 $3.99, VDS-3 $7.99, VDS-4 $12.99/mo.
+  Extra IPv4 purchasable (subnets /29 $7.50/mo - /22 $640/mo); per-IP price
+  not published. Seed = netlen.json (source + last-verified stamped).
+
+### LightNode - SEEDED (no tokenless API)
+- No public pricing API; their console API is authenticated. Seed from the
+  public pricing page (2026-10-03): Start/Agency/Premium/Enterprise tiers,
+  1/2/3/4 TB monthly traffic (both directions), USD monthly-tier prices
+  (Start 7.71 standard regions, 10.41 HK, 17.71 Cairo). Extra IPs **not
+  offered**; 1 static IPv4 included, 2 free IP changes. Hourly prepaid wallet.
+  Seed = lightnode.json.
+
 ## Hetzner Cloud (docs.hetzner.cloud + docs.hetzner.com billing/firewalls FAQ)
 
 - **Traffic fields on the server object**: `included_traffic`, `outgoing_traffic`,

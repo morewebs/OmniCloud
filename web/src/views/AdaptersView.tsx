@@ -7,12 +7,14 @@ import TableBody from '@mui/material/TableBody';
 import TableCell from '@mui/material/TableCell';
 import TableHead from '@mui/material/TableHead';
 import TableRow from '@mui/material/TableRow';
+import Tooltip from '@mui/material/Tooltip';
 import Typography from '@mui/material/Typography';
 import { api } from '../api';
 import type { AccountRow, AdapterInfo } from '../types';
 import { CAPABILITY_LABELS } from '../types';
+import { PageHeader } from '../components/PageHeader';
 
-/** Adapter registry + per-account health. Read-only in v1. */
+/** All 7 providers: fleet adapters + catalog providers in one registry view. */
 export function AdaptersView() {
   const adapters = useQuery<AdapterInfo[]>({ queryKey: ['adapters'],
     queryFn: () => api<AdapterInfo[]>('/api/adapters') });
@@ -22,31 +24,47 @@ export function AdaptersView() {
   if (adapters.isPending || accounts.isPending) return null;
   if (adapters.isError) return <Alert severity="error">{(adapters.error as Error).message}</Alert>;
 
+  const fleet = adapters.data!.filter(a => !a.source);
+  const catalogOnly = adapters.data!.filter(a => a.source);
+
   return (
     <Stack spacing={3}>
-      <Typography variant="h5">Adapters</Typography>
+      <PageHeader title="Adapters"
+        subtitle="Every provider on the panel — what it can do here, and where its plan data comes from." />
 
       <Table size="small">
         <TableHead>
           <TableRow>
-            <TableCell>Adapter</TableCell>
-            <TableCell>Capabilities</TableCell>
+            <TableCell>Provider</TableCell>
+            <TableCell>Server management</TableCell>
+            <TableCell>Plan catalog</TableCell>
             <TableCell>Accounts</TableCell>
           </TableRow>
         </TableHead>
         <TableBody>
-          {adapters.data!.map(a => {
+          {[...fleet, ...catalogOnly].map(a => {
             const users = accounts.data!.filter(x => x.adapter === a.key);
             return (
               <TableRow key={a.key}>
                 <TableCell>{a.display_name}</TableCell>
                 <TableCell>
-                  <Stack direction="row" sx={{ flexWrap: "wrap", gap: 0.5 }}>
-                    {a.capabilities.map(c => (
-                      <Chip key={c} size="small" variant="outlined"
-                            label={CAPABILITY_LABELS[c] ?? c} />
-                    ))}
-                  </Stack>
+                  {a.capabilities.length === 0 ? (
+                    <Tooltip title={CATALOG_NOTES[a.key] ?? 'Catalog only'}>
+                      <Chip size="small" label="catalog only" />
+                    </Tooltip>
+                  ) : (
+                    <Stack direction="row" sx={{ flexWrap: 'wrap', gap: 0.5 }}>
+                      {a.capabilities.map(c => (
+                        <Chip key={c} size="small" variant="outlined"
+                              label={CAPABILITY_LABELS[c] ?? c} />
+                      ))}
+                    </Stack>
+                  )}
+                </TableCell>
+                <TableCell>
+                  {a.source ? <CatalogSourceChip source={a.source} /> : (
+                    <Chip size="small" variant="outlined" label="live API" />
+                  )}
                 </TableCell>
                 <TableCell>
                   {users.length === 0 ? '—' : users.map(u => u.name).join(', ')}
@@ -57,10 +75,34 @@ export function AdaptersView() {
         </TableBody>
       </Table>
 
-      <Typography variant="body2" sx={{ color: 'text.secondary' }}>
-        Roadmap adapters: OVH, Gcore, Netlen, Lightnode, Tube-hosting. Each
-        maps its API onto the same canonical model; adding one adds no new UI.
-      </Typography>
+      <Stack spacing={1} sx={{ maxWidth: 720 }}>
+        <Typography variant="body2" sx={{ color: 'text.secondary' }}>
+          <strong>Fleet adapters</strong> manage servers through the provider API with
+          your account credentials. <strong>Catalog providers</strong> feed the plan
+          marketplace: live ones fetch prices straight from the provider, curated
+          ones carry public list prices with a last-verified date.
+        </Typography>
+        {catalogOnly.map(a => CATALOG_NOTES[a.key] && (
+          <Typography key={a.key} variant="body2" sx={{ color: 'text.secondary' }}>
+            {a.display_name}: {CATALOG_NOTES[a.key]}
+          </Typography>
+        ))}
+      </Stack>
     </Stack>
   );
 }
+
+function CatalogSourceChip({ source }: { source: 'live' | 'seeded' }) {
+  return source === 'live'
+    ? <Chip size="small" color="success" variant="outlined" label="live API" />
+    : <Chip size="small" color="warning" variant="outlined" label="curated" />;
+}
+
+// Why each catalog-only provider isn't a fleet adapter (docs/provider-truth.md)
+const CATALOG_NOTES: Record<string, string> = {
+  ovh: 'Fleet management blocked on OVH\'s 3-part credentials (AK/AS/CK); plans come from the public order catalog.',
+  gcore: 'Plans from the public API; server management needs an API key.',
+  tube: 'Plans from their pricing-page data asset; no public API.',
+  netlen: 'API needs Bearer + IP allowlist; public list prices curated.',
+  lightnode: 'No public API; public list prices curated.',
+};

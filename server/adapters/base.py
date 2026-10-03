@@ -118,6 +118,10 @@ class Plan(BaseModel):
     price_hourly: Money | None = None
     included_traffic_bytes: int | None = None
     counting: TrafficCounting | None = None
+    # Plain-language traffic statement for unmetered plans ("unlimited
+    # traffic, 10 Gbit/s port") where no byte number is published. Rendered
+    # INSTEAD of a number - never alongside a guessed one.
+    traffic_note: str | None = None
     overage_price: Money | None = None   # per TB
     extra_ip: IpOffer | None = None      # None = not offered or undocumented
     billing_model: str = ""              # plain text: "prepaid wallet", "monthly invoice" -

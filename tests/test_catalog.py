@@ -60,7 +60,9 @@ async def test_seed_loader_stamps_and_honesty():
     assert p.adapter == "netlen"
     assert p.billing_model == raw["billing_model"]
     assert p.extra_ip.price is None, "seed without published IP price must be None"
-    assert p.deprecated is True, "placeholder seed rows are marked deprecated"
+    # verified public list prices are not placeholders
+    assert p.deprecated is False
+    assert str(p.price_monthly.amount) == "2.99"
 
 
 async def test_store_and_read_roundtrip():
@@ -68,8 +70,8 @@ async def test_store_and_read_roundtrip():
     catalog.store("netlen", plans, "seeded", raw["last_verified"])
     data = catalog.read()
     netlen_rows = [r for r in data["plans"] if r["adapter"] == "netlen"]
-    assert len(netlen_rows) == 1
-    assert netlen_rows[0]["source"] == "seeded"
+    assert len(netlen_rows) == len(plans)
+    assert all(r["source"] == "seeded" for r in netlen_rows)
     assert netlen_rows[0]["last_verified"] == raw["last_verified"]
 
 
@@ -78,8 +80,11 @@ async def test_providers_info_separates_live_and_seeded():
     sources = {p["key"]: p["source"] for p in info}
     assert sources["hetzner"] == "live"
     assert sources["leaseweb"] == "live"
-    for key in ("ovh", "gcore", "lightnode", "netlen", "tube"):
+    for key in ("ovh", "gcore", "tube"):
+        assert sources[key] == "live", f"{key} has tokenless endpoints (verified)"
+    for key in ("netlen", "lightnode"):
         assert sources[key] == "seeded"
-    # seeded providers declare no capabilities (capability gating preserved)
-    seeded = next(p for p in info if p["key"] == "netlen")
-    assert seeded["capabilities"] == []
+    # catalog-only providers declare no capabilities (gating preserved)
+    for key in ("ovh", "gcore", "tube", "netlen", "lightnode"):
+        entry = next(p for p in info if p["key"] == key)
+        assert entry["capabilities"] == []

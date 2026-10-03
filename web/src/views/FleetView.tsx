@@ -32,6 +32,7 @@ import { Value, StaleStamp } from '../components/Value';
 import { Sparkline } from '../components/Sparkline';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { FirewallDialog, AttachFirewallDialog, CreateFirewallDialog, toHetznerRules } from '../components/FirewallDialog';
+import { PageHeader } from '../components/PageHeader';
 
 
 export function FleetView() {
@@ -42,7 +43,8 @@ export function FleetView() {
     queryFn: () => api<AdapterInfo[]>('/api/adapters') });
   const me = useQuery({ queryKey: ['me'],
     queryFn: () => api<{ role: string }>('/api/auth/me') });
-  const [search, setSearch] = useState('');
+  const [search, setSearch] = useState(() =>
+    new URLSearchParams(window.location.search).get('q') ?? '');
   const [detail, setDetail] = useState<Server | null>(null);
   // Large fleets: paginate the table (25/50/100 per page) instead of
   // rendering hundreds of meter rows at once.
@@ -95,12 +97,10 @@ export function FleetView() {
 
   return (
     <Stack spacing={2}>
-      <Stack direction="row" spacing={2} sx={{ alignItems: "baseline", flexWrap: "wrap" }}>
-        <Typography variant="h5">Fleet</Typography>
-        <Typography className="num" variant="body2" sx={{ color: 'text.secondary' }}>
-          {summary.total} servers · {summary.running} running · {summary.notReporting} unknown · {fmtBytes(summary.traffic)} this month · projected overage €{summary.overage.toFixed(2)}
-        </Typography>
-      </Stack>
+      <PageHeader
+        title="Fleet"
+        subtitle={`${summary.total} servers · ${summary.running} running · ${summary.notReporting} unknown · ${fmtBytes(summary.traffic)} this month · projected overage €${summary.overage.toFixed(2)}`}
+      />
 
       {fleet.data.in_progress_actions.length > 0 && (
         <Alert severity="info" icon={false}>

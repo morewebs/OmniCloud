@@ -1,11 +1,13 @@
 # OmniCloud
 
 An open-source, multi-provider cloud control panel. OmniCloud aggregates
-server fleets, traffic allowances, and billing exposure across cloud
-providers behind one canonical data model.
+server fleets, traffic allowances, billing exposure, and a plan marketplace
+across cloud providers behind one canonical data model.
 
-**First-class adapters:** Hetzner Cloud, LeaseWeb.
-**Roadmap:** OVH, Gcore, Netlen, Lightnode, Tube-hosting.
+**Server management:** Hetzner Cloud, LeaseWeb.
+**Plan marketplace (7 providers):** Hetzner, LeaseWeb, OVHcloud, Gcore,
+Tube-hosting (live pricing from public APIs) + Netlen, LightNode (curated
+public list prices, stamped with source and last-verified date).
 
 ## Quick start
 
@@ -31,11 +33,17 @@ ever displayed).
 ## How it works
 
 - **Adapters** map each provider API onto canonical entities
-  (`Server`, `Allowance`, `Money`, `Facet`). The UI renders only canonical
-  entities - adding a provider adds zero new UI patterns.
+  (`Server`, `Allowance`, `Money`, `Facet`, `Plan`). The UI renders only
+  canonical entities - adding a provider adds zero new UI patterns.
 - **Capabilities** (power, rename, rebuild, firewall, delete...) are declared
   per adapter. A capability an adapter lacks is absent from the UI, never a
   disabled button.
+- **Plan marketplace:** every provider's plans with prices, included
+  traffic, and extra-IP cost - live from public APIs where one exists
+  (OVH order catalog, Gcore public API, Tube-hosting's pricing asset),
+  otherwise curated with a visible source badge. Compare plans across
+  providers and place orders (prototype pipeline: simulated execution,
+  clearly labeled; the `mode` column is the go-live flip).
 - **Data honesty:** a value the provider API does not expose reads
   *not exposed*; a momentarily missing value reads *-*. Neither is ever zero.
   A `202 Accepted` from a provider is never success - actions complete only

@@ -1,23 +1,45 @@
 {
   "adapter": "netlen",
-  "source_url": "https://netlen.com/pricing",
-  "source_note": "public pricing page, manually transcribed - TODO verify during provider research",
+  "source_url": "https://www.netlen.com.tr/vds",
+  "source_note": "public pricing pages, manually transcribed 2026-10-03. Netlen has a public REST API (api.netlen.com.tr/v2) but every endpoint, including pricing, requires a Bearer API key with an IP allowlist - so the catalog is seeded. Prices are list prices, USD.",
   "last_verified": "2026-10-03",
-  "billing_model": "monthly invoice",
+  "billing_model": "monthly invoice (USD) or hourly",
   "plans": [
     {
-      "name": "placeholder-netlen-1",
-      "location": "istanbul",
-      "cpu_cores": 4,
-      "ram_gb": 8,
-      "disk_gb": 200,
-      "disk_type": "nvme ssd",
-      "price_monthly": {"amount": "0.00", "currency": "USD", "vat_inclusive": null},
-      "included_traffic_bytes": null,
-      "counting": null,
+      "name": "VDS-1", "location": "istanbul",
+      "cpu_cores": 1, "ram_gb": 1, "disk_gb": 15, "disk_type": "ssd",
+      "price_monthly": {"amount": "2.99", "currency": "USD", "vat_inclusive": null},
+      "included_traffic_bytes": null, "counting": null,
+      "traffic_note": "unlimited traffic (Limitsiz Trafik), 10 Gbit/s port",
       "extra_ip": {"kind": "public ipv4", "included": 1, "price": null,
-                    "note": "not published; contact provider"},
-      "deprecated": true
+                    "note": "extra IPv4 purchasable, no stated limit; per-IP price not published (subnets /29 $7.50/mo up to /22 $640/mo)"}
+    },
+    {
+      "name": "VDS-2", "location": "istanbul",
+      "cpu_cores": 1, "ram_gb": 2, "disk_gb": 30, "disk_type": "ssd",
+      "price_monthly": {"amount": "3.99", "currency": "USD", "vat_inclusive": null},
+      "included_traffic_bytes": null, "counting": null,
+      "traffic_note": "unlimited traffic, 10 Gbit/s port",
+      "extra_ip": {"kind": "public ipv4", "included": 1, "price": null,
+                    "note": "extra IPv4 purchasable; per-IP price not published"}
+    },
+    {
+      "name": "VDS-3", "location": "istanbul",
+      "cpu_cores": 2, "ram_gb": 4, "disk_gb": 60, "disk_type": "ssd",
+      "price_monthly": {"amount": "7.99", "currency": "USD", "vat_inclusive": null},
+      "included_traffic_bytes": null, "counting": null,
+      "traffic_note": "unlimited traffic, 10 Gbit/s port",
+      "extra_ip": {"kind": "public ipv4", "included": 1, "price": null,
+                    "note": "extra IPv4 purchasable; per-IP price not published"}
+    },
+    {
+      "name": "VDS-4", "location": "istanbul",
+      "cpu_cores": 4, "ram_gb": 8, "disk_gb": 120, "disk_type": "ssd",
+      "price_monthly": {"amount": "12.99", "currency": "USD", "vat_inclusive": null},
+      "included_traffic_bytes": null, "counting": null,
+      "traffic_note": "unlimited traffic, 10 Gbit/s port",
+      "extra_ip": {"kind": "public ipv4", "included": 1, "price": null,
+                    "note": "extra IPv4 purchasable; per-IP price not published"}
     }
   ]
 }

@@ -144,6 +144,16 @@ ADAPTERS = [
     {"key": "leaseweb", "display_name": "LeaseWeb",
      "capabilities": ["delete", "power_off", "power_on", "reboot", "relabel",
                       "rename", "shutdown"]},
+    {"key": "ovh", "display_name": "OVHcloud", "capabilities": [],
+     "source": "live"},
+    {"key": "gcore", "display_name": "Gcore", "capabilities": [],
+     "source": "live"},
+    {"key": "tube", "display_name": "Tube-hosting", "capabilities": [],
+     "source": "live"},
+    {"key": "netlen", "display_name": "Netlen", "capabilities": [],
+     "source": "seeded"},
+    {"key": "lightnode", "display_name": "LightNode", "capabilities": [],
+     "source": "seeded"},
 ]
 
 # Shared firewalls across batches of servers (the real Hetzner workflow).
@@ -171,11 +181,186 @@ BILLING = [
      "projected_overage_eur": 0.0, "servers": 3, "price_not_exposed": True},
 ]
 
+# ---- v2: catalog + orders + overview demo data --------------------------
+
+def _plan(adapter, name, location, cpu, ram, disk, price, cur="EUR",
+          traffic=None, traffic_note=None, ip_price=None, ip_note=None, billing="", source="live"):
+    return {
+        "adapter": adapter, "name": name, "location": location,
+        "cpu_cores": cpu, "cpu_arch": "x86", "ram_gb": ram, "disk_gb": disk,
+        "disk_type": "nvme",
+        "price_monthly": {"amount": price, "currency": cur, "vat_inclusive": True},
+        "price_hourly": None,
+        "included_traffic_bytes": traffic,
+        "counting": "outgoing_only" if traffic else None,
+        "overage_price": {"amount": "1.19", "currency": "EUR", "vat_inclusive": True} if traffic else None,
+        "traffic_note": traffic_note,
+        "extra_ip": {"kind": "floating", "included": 1, "price": (
+            {"amount": ip_price, "currency": cur, "vat_inclusive": True} if ip_price else None),
+            "limit": 5, "note": ip_note},
+        "billing_model": billing, "deprecated": False,
+        "source": source, "last_verified": "2026-10-03" if source == "seeded" else None,
+    }
+
+CATALOG = {
+    "providers": [
+        {"key": "hetzner", "display_name": "Hetzner Cloud", "source": "live",
+         "capabilities": ["delete", "firewall", "power_on", "power_off", "reboot",
+                          "rebuild", "relabel", "rename", "shutdown"]},
+        {"key": "leaseweb", "display_name": "LeaseWeb", "source": "live",
+         "capabilities": ["delete", "power_on", "power_off", "reboot", "relabel", "rename", "shutdown"]},
+        {"key": "ovh", "display_name": "OVHcloud", "source": "live", "capabilities": []},
+        {"key": "gcore", "display_name": "Gcore", "source": "live", "capabilities": []},
+        {"key": "tube", "display_name": "Tube-hosting", "source": "live", "capabilities": []},
+        {"key": "netlen", "display_name": "Netlen", "source": "seeded", "capabilities": []},
+        {"key": "lightnode", "display_name": "LightNode", "source": "seeded", "capabilities": []},
+    ],
+    "plans": {
+        "hetzner": [
+            _plan("hetzner", "cx22", "fsn1", 2, 4, 40, "3.92", traffic=21.99 * TB,
+                  ip_note="floating IPs; price not published in the API",
+                  billing="monthly invoice or prepaid credit"),
+            _plan("hetzner", "cx22", "ash", 2, 4, 40, "4.51", traffic=1.1 * TB,
+                  ip_note="floating IPs; price not published in the API",
+                  billing="monthly invoice or prepaid credit"),
+            _plan("hetzner", "cpx21", "fsn1", 3, 4, 80, "5.89", traffic=21.99 * TB,
+                  ip_note="floating IPs; price not published in the API",
+                  billing="monthly invoice or prepaid credit"),
+            _plan("hetzner", "ccx13", "nbg1", 2, 8, 80, "8.79", traffic=21.99 * TB,
+                  ip_note="floating IPs; price not published in the API",
+                  billing="monthly invoice or prepaid credit"),
+        ],
+        "leaseweb": [
+            _plan("leaseweb", "lsw.m3.small", "eu-west-3", 1, 4, 50, "8.40",
+                  ip_note="additional IPs orderable; price not published in the API",
+                  billing="monthly invoice (term) or hourly prepaid"),
+            _plan("leaseweb", "lsw.m3.medium", "eu-west-3", 2, 8, 80, "14.90",
+                  ip_note="additional IPs orderable; price not published in the API",
+                  billing="monthly invoice (term) or hourly prepaid"),
+        ],
+        "ovh": [
+            _plan("ovh", "vps-value-1-2-40", "GRA", 1, 2, 40, "5.80",
+                  traffic_note="unlimited traffic (fair-use); bandwidth by model",
+                  ip_price="1.99",
+                  ip_note="Additional IP (RIPE); max 16 per VPS",
+                  billing="monthly invoice, 1/12/24-month terms"),
+            _plan("ovh", "vps-essential-2-4-40", "GRA", 2, 4, 40, "11.30",
+                  traffic_note="unlimited traffic (fair-use)",
+                  ip_price="1.99",
+                  ip_note="Additional IP (RIPE); max 16 per VPS",
+                  billing="monthly invoice, 1/12/24-month terms"),
+            _plan("ovh", "vps-2027-model1", "SBG", 2, 4, 40, "4.49",
+                  traffic_note="unlimited traffic; 500 Mbps",
+                  ip_price="1.99", ip_note="Additional IP (RIPE); max 16 per VPS",
+                  billing="monthly invoice, 1/12/24-month terms"),
+        ],
+        "gcore": [
+            _plan("gcore", "g2s-shared-1-1-25", "FRN-2", 1, 1, 25, "46.22", cur="USD",
+                  traffic_note="unmetered (free ingress and egress)",
+                  ip_price="2.75",
+                  ip_note="public IPv4",
+                  billing="prepaid pay-as-you-go wallet (per-minute)"),
+            _plan("gcore", "g3a-standard-2-4-50", "FRN-2", 2, 4, 50, "19.30", cur="USD",
+                  traffic_note="unmetered (free ingress and egress)",
+                  ip_price="2.75", ip_note="public IPv4",
+                  billing="prepaid pay-as-you-go wallet (per-minute)"),
+        ],
+        "tube": [
+            _plan("tube", "Starter", "NL", 2, 4, 30, "5.00",
+                  ip_note="offered; price not published - verify at order",
+                  billing="prepaid"),
+            _plan("tube", "Advanced", "NL", 4, 8, 60, "9.00",
+                  ip_note="offered; price not published - verify at order",
+                  billing="prepaid"),
+        ],
+        "netlen": [
+            _plan("netlen", "VDS-1", "istanbul", 1, 1, 15, "2.99", cur="USD",
+                  traffic_note="unlimited traffic, 10 Gbit/s port",
+                  ip_note="extra IPv4 purchasable; per-IP price not published",
+                  billing="monthly invoice (USD) or hourly", source="seeded"),
+            _plan("netlen", "VDS-3", "istanbul", 2, 4, 60, "7.99", cur="USD",
+                  traffic_note="unlimited traffic, 10 Gbit/s port",
+                  ip_note="extra IPv4 purchasable; per-IP price not published",
+                  billing="monthly invoice (USD) or hourly", source="seeded"),
+            _plan("netlen", "VDS-4", "istanbul", 4, 8, 120, "12.99", cur="USD",
+                  traffic_note="unlimited traffic, 10 Gbit/s port",
+                  ip_note="extra IPv4 purchasable; per-IP price not published",
+                  billing="monthly invoice (USD) or hourly", source="seeded"),
+        ],
+        "lightnode": [
+            _plan("lightnode", "Start", "istanbul", 2, 2, 50, "7.71", cur="USD",
+                  traffic=1 * TB, ip_note="not offered as add-on; 1 static IPv4 included",
+                  billing="hourly prepaid (wallet)", source="seeded"),
+            _plan("lightnode", "Premium", "istanbul", 8, 8, 200, "27.70", cur="USD",
+                  traffic=3 * TB, billing="hourly prepaid (wallet)", source="seeded"),
+            _plan("lightnode", "Start", "hong-kong", 2, 2, 50, "10.41", cur="USD",
+                  traffic=1 * TB, billing="hourly prepaid (wallet)", source="seeded"),
+        ],
+    },
+    "state": [
+        {"adapter": k, "last_success_at": NOW, "last_error": None}
+        for k in ("hetzner", "leaseweb", "ovh", "gcore", "tube", "netlen", "lightnode")
+    ],
+}
+
+def _order(id_, status, adapter, plan, loc, est, cur, extra=0, mode="prototype"):
+    return {
+        "id": id_, "mode": mode, "status": status, "adapter": adapter,
+        "account_id": 1, "plan_name": plan, "location": loc,
+        "options": f'{{"extra_ips": {extra}}}',
+        "plan_snapshot": "{}",
+        "estimated_monthly": f'{{"amount": "{est}", "currency": "{cur}", "partial": false}}',
+        "resulting_provider_id": f"proto-{id_}" if status == "provisioned" else None,
+        "requested_by": 1, "username": "demo-admin",
+        "created_at": NOW, "updated_at": NOW,
+    }
+
+ORDERS = [
+    _order(3, "confirmed", "hetzner", "cx22", "fsn1", "3.92", "EUR"),
+    _order(2, "provisioned", "lightnode", "std-2-4", "fra", "9.90", "USD", extra=1),
+    _order(1, "cancelled", "gcore", "g1-standard-1-2", "ams", "5.00", "USD"),
+]
+
+TRAFFIC_DAYS = [
+    {"day": f"2026-10-{d:02d}", "bytes": int((28 + i * 2.3) * TB)}
+    for i, d in enumerate(range(1, 4))
+]
+
+OVERVIEW = {
+    "fleet": {"total": 200, "by_status": {"running": 188, "unknown": 11, "off": 1}},
+    "spend": {"hetzner": {"EUR": 743.6}, "leaseweb": {"EUR": 92.4}},
+    "projected_overage": {"EUR": 0.30},
+    "traffic_days": TRAFFIC_DAYS,
+    "recent_actions": [
+        {"id": 12, "kind": "rebuild", "status": "in_progress", "detail": None,
+         "created_at": NOW, "username": "demo-admin"},
+        {"id": 11, "kind": "reboot", "status": "done", "detail": "reboot success",
+         "created_at": "2026-10-03T09:41:00+00:00", "username": "demo-admin"},
+        {"id": 10, "kind": "firewall.attach", "status": "done", "detail": None,
+         "created_at": "2026-10-03T08:12:00+00:00", "username": "demo-admin"},
+    ],
+    "recent_orders": [
+        {"id": 3, "status": "confirmed", "adapter": "hetzner", "plan_name": "cx22",
+         "estimated_monthly": '{"amount": "3.92", "currency": "EUR"}', "created_at": NOW},
+        {"id": 2, "status": "provisioned", "adapter": "lightnode", "plan_name": "std-2-4",
+         "estimated_monthly": '{"amount": "9.90", "currency": "USD"}', "created_at": NOW},
+    ],
+    "alerts": [
+        {"kind": "allowance", "server": "srv-hil1-02", "adapter": "hetzner", "pct": 85},
+        {"kind": "allowance", "server": "srv-ash1-03", "adapter": "hetzner", "pct": 127},
+        {"kind": "sync", "account_id": 2, "error": "AdapterError: 429 rate limited"},
+    ],
+}
+
 ROUTES = {
     "/api/auth/status": {"needs_setup": False},
     "/api/auth/me": {"id": 1, "username": "demo-admin", "role": "admin"},
     "/api/fleet": FLEET,
     "/api/adapters": ADAPTERS,
+    "/api/catalog": CATALOG,
+    "/api/catalog/providers": CATALOG["providers"],
+    "/api/orders": ORDERS,
+    "/api/overview": OVERVIEW,
     "/api/accounts/1/firewalls": FIREWALLS,
     "/api/accounts": ACCOUNTS,
     "/api/allowances": ALLOWANCES,

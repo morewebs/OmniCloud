@@ -16,26 +16,30 @@ from pathlib import Path
 
 from . import db
 from .adapters.base import IpOffer, Money, Plan, ProviderAdapter, TrafficCounting
+from .adapters.gcore import GcoreCatalogAdapter
 from .adapters.hetzner import HetznerAdapter
 from .adapters.leaseweb import LeasewebAdapter
+from .adapters.ovh import OvhCatalogAdapter
+from .adapters.tube import TubeCatalogAdapter
 
 log = logging.getLogger("omnicloud.catalog")
 
 SEED_DIR = Path(__file__).resolve().parent / "seed_catalog"
 
-# Registry: live adapters fetch via list_plans(); seeded adapters load from
-# seed_catalog/{key}.json. Display metadata for both.
+# Registry: LIVE adapters fetch plans tokenlessly (or via a fleet account's
+# credential for Hetzner/LeaseWeb); SEEDED providers load curated public-
+# pricing JSON from seed_catalog/{key}.json with source + last-verified stamps.
 LIVE: dict[str, type[ProviderAdapter]] = {
     HetznerAdapter.key: HetznerAdapter,
     LeasewebAdapter.key: LeasewebAdapter,
+    OvhCatalogAdapter.key: OvhCatalogAdapter,      # tokenless order catalog
+    GcoreCatalogAdapter.key: GcoreCatalogAdapter,  # public API + pricing BFF
+    TubeCatalogAdapter.key: TubeCatalogAdapter,    # pricing-page data asset
 }
 SEEDED: dict[str, str] = {
-    # key -> display name (truth-doc + seed file must exist per provider)
-    "netlen": "Netlen",
-    "tube": "Tube-hosting",
-    "ovh": "OVHcloud",
-    "gcore": "Gcore",
-    "lightnode": "LightNode",
+    # key -> display name; reasons in docs/provider-truth.md
+    "netlen": "Netlen",        # API exists but needs Bearer + IP-allowlist even for pricing
+    "lightnode": "LightNode",  # no tokenless API; console API is authenticated
 }
 
 _tasks: dict[str, asyncio.Task] = {}
@@ -77,6 +81,7 @@ def load_seed(adapter: str) -> tuple[list[Plan], dict]:
                                 vat_inclusive=pm.get("vat_inclusive")) if pm.get("amount") else None,
             included_traffic_bytes=p.get("included_traffic_bytes"),
             counting=(TrafficCounting(p["counting"]) if p.get("counting") else None),
+            traffic_note=p.get("traffic_note"),
             extra_ip=IpOffer(
                 kind=extra.get("kind", "public ipv4"),
                 included=extra.get("included", 1),
@@ -128,22 +133,28 @@ def read() -> list[dict]:
 
 # -- sync -----------------------------------------------------------------------
 
+# Adapters whose catalog needs a fleet-account credential (Hetzner/LeaseWeb
+# APIs are authenticated); the others (OVH/Gcore/Tube) are tokenless.
+_CREDENTIALED = {"hetzner", "leaseweb"}
+
+
 async def sync_all_once() -> None:
     """One pass over every catalog provider (live fetch + seeded load)."""
     for key, cls in LIVE.items():
-        # Live catalog needs an account credential (Hetzner/LeaseWeb APIs are
-        # authenticated); use the first enabled account of that adapter.
-        with db.connect() as conn:
-            row = conn.execute(
-                "SELECT a.id FROM accounts a WHERE a.adapter=? AND a.enabled=1 LIMIT 1",
-                (key,)).fetchone()
-        if not row:
-            _record_error(key, "no enabled account; live catalog needs credentials")
-            continue
         try:
-            from . import accounts as accounts_mod
-            account = accounts_mod.get_account(row["id"])
-            adapter = accounts_mod.build_adapter(account)
+            if key in _CREDENTIALED:
+                with db.connect() as conn:
+                    row = conn.execute(
+                        "SELECT a.id FROM accounts a WHERE a.adapter=? AND a.enabled=1 "
+                        "LIMIT 1", (key,)).fetchone()
+                if not row:
+                    _record_error(key, "no enabled account; live catalog needs credentials")
+                    continue
+                from . import accounts as accounts_mod
+                account = accounts_mod.get_account(row["id"])
+                adapter = accounts_mod.build_adapter(account)
+            else:
+                adapter = cls()  # tokenless catalog provider
             try:
                 plans = await adapter.list_plans()
             finally:

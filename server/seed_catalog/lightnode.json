@@ -1,23 +1,52 @@
 {
   "adapter": "lightnode",
   "source_url": "https://lightnode.com/pricing",
-  "source_note": "public pricing page, manually transcribed - TODO verify during provider research",
+  "source_note": "public pricing page, manually transcribed 2026-10-03. LightNode has no tokenless pricing API (their console API is authenticated); catalog is seeded. Standard-region prices (Istanbul et al.); premium regions cost more. Prices are list prices, USD, monthly tier.",
   "last_verified": "2026-10-03",
-  "billing_model": "hourly prepaid (wallet)",
+  "billing_model": "hourly prepaid (wallet); monthly tier priced per month",
   "plans": [
     {
-      "name": "placeholder-lightnode-1",
-      "location": "placeholder-region",
-      "cpu_cores": 2,
-      "ram_gb": 4,
-      "disk_gb": 50,
-      "disk_type": "nvme ssd",
-      "price_monthly": {"amount": "0.00", "currency": "USD", "vat_inclusive": null},
-      "included_traffic_bytes": null,
-      "counting": null,
+      "name": "Start", "location": "istanbul",
+      "cpu_cores": 2, "ram_gb": 2, "disk_gb": 50, "disk_type": "nvme ssd",
+      "price_monthly": {"amount": "7.71", "currency": "USD", "vat_inclusive": null},
+      "included_traffic_bytes": 1000000000000, "counting": "ingress_and_egress",
       "extra_ip": {"kind": "public ipv4", "included": 1, "price": null,
-                    "note": "not published; contact provider"},
-      "deprecated": true
+                    "note": "not offered as add-on; 1 dedicated static IPv4 included, 2 free IP changes per machine"}
+    },
+    {
+      "name": "Agency", "location": "istanbul",
+      "cpu_cores": 4, "ram_gb": 4, "disk_gb": 100, "disk_type": "nvme ssd",
+      "price_monthly": {"amount": "14.70", "currency": "USD", "vat_inclusive": null},
+      "included_traffic_bytes": 2000000000000, "counting": "ingress_and_egress",
+      "extra_ip": null
+    },
+    {
+      "name": "Premium", "location": "istanbul",
+      "cpu_cores": 8, "ram_gb": 8, "disk_gb": 200, "disk_type": "nvme ssd",
+      "price_monthly": {"amount": "27.70", "currency": "USD", "vat_inclusive": null},
+      "included_traffic_bytes": 3000000000000, "counting": "ingress_and_egress",
+      "extra_ip": null
+    },
+    {
+      "name": "Enterprise", "location": "istanbul",
+      "cpu_cores": 16, "ram_gb": 16, "disk_gb": 400, "disk_type": "nvme ssd",
+      "price_monthly": {"amount": "52.70", "currency": "USD", "vat_inclusive": null},
+      "included_traffic_bytes": 4000000000000, "counting": "ingress_and_egress",
+      "extra_ip": null
+    },
+    {
+      "name": "Start", "location": "hong-kong",
+      "cpu_cores": 2, "ram_gb": 2, "disk_gb": 50, "disk_type": "nvme ssd",
+      "price_monthly": {"amount": "10.41", "currency": "USD", "vat_inclusive": null},
+      "included_traffic_bytes": 1000000000000, "counting": "ingress_and_egress",
+      "extra_ip": null
+    },
+    {
+      "name": "Start", "location": "egypt",
+      "cpu_cores": 2, "ram_gb": 2, "disk_gb": 50, "disk_type": "nvme ssd",
+      "price_monthly": {"amount": "17.71", "currency": "USD", "vat_inclusive": null},
+      "included_traffic_bytes": 1000000000000, "counting": "ingress_and_egress",
+      "extra_ip": null
     }
   ]
 }

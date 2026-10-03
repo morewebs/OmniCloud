@@ -285,7 +285,9 @@ def force_sync(account_id: int, user=Depends(auth.require_user)):
 
 @router.get("/adapters")
 def adapters(user: auth.User = Depends(auth.require_user)):
-    return accounts.adapter_info()
+    """Fleet adapters (account-backed) + catalog providers (marketplace-only)
+    in one response, each with its catalog source."""
+    return accounts.adapter_info() + catalog.providers_info()
 
 
 # -- actions ----------------------------------------------------------------------

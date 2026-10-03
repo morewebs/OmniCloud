@@ -1,0 +1,40 @@
+{
+  "catalogId": "9e7a",
+  "locale": {"currencyCode": "EUR", "subsidiary": "FR", "taxRate": 20},
+  "plans": [
+    {
+      "planCode": "vps-value-1-2-40",
+      "invoiceName": "VPS Value 1",
+      "product": "vps",
+      "pricingType": "rental",
+      "pricings": [
+        {"phase": "installation", "capacities": ["installation"], "interval": 1,
+         "intervalUnit": "month", "price": 0, "formattedPrice": "0.00 €", "tax": 0},
+        {"phase": "renew", "capacities": ["renew"], "interval": 1,
+         "intervalUnit": "month", "price": 580000000, "formattedPrice": "5.80 €",
+         "tax": 20, "mode": "default", "strategy": "tiered"}
+      ],
+      "configurations": [
+        {"name": "vps_datacenter", "values": ["GRA", "SBG"]},
+        {"name": "vps_os", "values": ["debian_12", "ubuntu_22.04"]},
+        {"name": "region", "values": ["europe"]}
+      ],
+      "addonFamilies": [{"name": "os", "exclusive": true, "mandatory": true, "addons": []}]
+    },
+    {
+      "planCode": "vps-essential-2-4-40",
+      "invoiceName": "VPS Essential 2",
+      "product": "vps",
+      "pricingType": "rental",
+      "pricings": [
+        {"phase": "renew", "capacities": ["renew"], "interval": 1,
+         "intervalUnit": "month", "price": 1130000000, "formattedPrice": "11.30 €",
+         "tax": 20, "mode": "default", "strategy": "tiered"}
+      ],
+      "configurations": [
+        {"name": "vps_datacenter", "values": ["GRA"]}
+      ],
+      "addonFamilies": []
+    }
+  ]
+}

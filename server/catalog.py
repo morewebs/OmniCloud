@@ -192,13 +192,30 @@ def _publish(adapter: str) -> None:
 
 async def _loop() -> None:
     """Provider-level catalog loop (one task, all providers, vs per-account
-    fleet sync). Interval from settings, editable live."""
+    fleet sync). Interval from settings, editable live. Doubles as the
+    retention sweeper (once a day is enough for a single-operator panel)."""
+    last_sweep_day = ""
     while True:
         await sync_all_once()
+        today = db.now()[:10]
+        if today != last_sweep_day:
+            _sweep()
+            last_sweep_day = today
         hours = float(db.get_setting("catalog_sync_interval_hours") or 24)
         # ponytail: single loop for all providers; per-provider tasks if one
         # slow provider ever blocks the rest
         await asyncio.sleep(max(1.0, hours) * 3600)  # floor 1h: no typo-driven hammering
+
+
+def _sweep() -> None:
+    """Retention: 400 days of traffic history, 180 days of finished actions.
+    Orders/audit keep forever (they are the operator's legal trail)."""
+    with contextlib.suppress(Exception):
+        with db.connect() as conn:
+            conn.execute("DELETE FROM traffic_history WHERE day < date('now', '-400 days')")
+            conn.execute("DELETE FROM actions WHERE status != 'in_progress' "
+                         "AND created_at < datetime('now', '-180 days')")
+            log.info("retention sweep done")
 
 
 def start() -> None:

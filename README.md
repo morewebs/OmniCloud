@@ -65,6 +65,11 @@ ever displayed).
 | `OMNICLOUD_DB` | SQLite database path | `./omnicloud.db` |
 | `OMNICLOUD_SESSION_TTL_DAYS` | Session lifetime | 30 |
 | `OMNICLOUD_SYNC_INTERVAL_MIN` | Default sync interval (minutes) | 5 |
+| `OMNICLOUD_COOKIE_SECURE` | Secure session cookie flag (`0` for local HTTP dev only) | `1` |
+
+**Production:** see [DEPLOY.md](DEPLOY.md) — TLS, backups (DB + master key
+together), reverse proxy (SSE unbuffered, ≥960s read timeout for long server
+actions), Docker.
 
 ## Tests
 

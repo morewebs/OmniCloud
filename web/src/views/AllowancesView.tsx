@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import Alert from '@mui/material/Alert';
 import Box from '@mui/material/Box';
 import Stack from '@mui/material/Stack';
+import Tooltip from '@mui/material/Tooltip';
 import Table from '@mui/material/Table';
 import TableBody from '@mui/material/TableBody';
 import TableCell from '@mui/material/TableCell';
@@ -73,14 +74,13 @@ export function AllowancesView() {
       </Box>
 
       <Box sx={{ overflowX: 'auto' }}>
-        <Table size="small" sx={{ minWidth: 800 }}>
+        <Table size="small" sx={{ minWidth: 700 }}>
           <TableHead>
             <TableRow>
               <TableCell>Server</TableCell>
               <TableCell>Provider</TableCell>
               <TableCell>Allowance</TableCell>
-              <TableCell>Counting</TableCell>
-              <TableCell>Window</TableCell>
+              <TableCell>Rule</TableCell>
               <TableCell align="right">Projected overage</TableCell>
               <TableCell align="right">As of</TableCell>
             </TableRow>
@@ -92,11 +92,24 @@ export function AllowancesView() {
                 <TableCell>{r.adapter}</TableCell>
                 <TableCell><AllowanceMeter allowance={r.allowance} /></TableCell>
                 <TableCell>
-                  {r.allowance.counting
-                    ? COUNTING_TEXT[r.allowance.counting] ?? r.allowance.counting
-                    : '—'}
+                  {r.allowance.counting ? (
+                    <Stack direction="row" spacing={0.5} sx={{ alignItems: 'center', display: 'inline-flex' }}>
+                      <span>{COUNTING_TEXT[r.allowance.counting] ?? r.allowance.counting}</span>
+                      {r.allowance.window && (
+                        <Tooltip title={r.allowance.window}>
+                          <Typography className="num" variant="caption"
+                                      aria-label={`How traffic is counted: ${r.allowance.window}`}
+                                      sx={{
+                                        color: 'text.secondary', cursor: 'help',
+                                        border: 1, borderColor: 'divider', borderRadius: '50%',
+                                        width: 14, height: 14, lineHeight: '14px',
+                                        textAlign: 'center', display: 'inline-block',
+                                      }}>?</Typography>
+                        </Tooltip>
+                      )}
+                    </Stack>
+                  ) : '—'}
                 </TableCell>
-                <TableCell>{r.allowance.window ?? '—'}</TableCell>
                 <TableCell align="right">
                   <Value
                     value={r.allowance.projected_overage_cost

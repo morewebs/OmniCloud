@@ -200,6 +200,11 @@ async def _loop() -> None:
         today = db.now()[:10]
         if today != last_sweep_day:
             _sweep()
+            # daily best-effort update check rides the same wake (update.py
+            # owns its own failure silence)
+            from . import update
+            with contextlib.suppress(Exception):
+                await update.check()
             last_sweep_day = today
         hours = float(db.get_setting("catalog_sync_interval_hours") or 24)
         # ponytail: single loop for all providers; per-provider tasks if one

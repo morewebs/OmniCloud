@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from . import accounts, audit, auth, catalog, config, db, orders, secrets, sync
+from . import accounts, audit, auth, catalog, config, db, orders, secrets, sync, update, version
 from .adapters.base import Capability
 
 router = APIRouter(prefix="/api")
@@ -696,15 +696,16 @@ def patch_user(user_id: int, body: UserPatch, user: auth.User = Depends(auth.req
 @router.get("/settings")
 def get_settings(user: auth.User = Depends(auth.require_admin)):
     with db.connect() as conn:
-        rows = conn.execute("SELECT key, value FROM settings WHERE key LIKE 'sync_%'").fetchall()
+        rows = conn.execute("SELECT key, value FROM settings WHERE key LIKE 'sync_%' "
+                            "OR key LIKE 'update_%'").fetchall()
     return {r["key"]: r["value"] for r in rows}
 
 
 @router.put("/settings")
 def put_settings(body: dict, user: auth.User = Depends(auth.require_admin)):
     for k, v in body.items():
-        if not k.startswith("sync_"):
-            raise HTTPException(400, "only sync_* settings are editable")
+        if not (k.startswith("sync_") or k.startswith("update_")):
+            raise HTTPException(400, "only sync_* and update_* settings are editable")
         db.set_setting(k, str(v))
     audit.record(user.id, "settings.update", "settings")
     return {"ok": True}
@@ -736,6 +737,27 @@ async def stream(request: Request, user: auth.User = Depends(auth.require_user))
 
 
 @router.get("/health")
+# -- updates ------------------------------------------------------------------
+
+@router.get("/update/status")
+def update_status(user: auth.User = Depends(auth.require_user)):
+    return update.status()
+
+
+@router.post("/update/check")
+async def update_check(user: auth.User = Depends(auth.require_user)):
+    return await update.check()
+
+
+@router.post("/update/apply")
+async def update_apply(user: auth.User = Depends(auth.require_admin)):
+    try:
+        return await update.apply()
+    except RuntimeError as e:
+        raise HTTPException(409, str(e))
+
+
+@router.get("/health")
 def health():
     """Liveness + readiness: the DB must actually answer."""
     try:
@@ -743,4 +765,5 @@ def health():
             conn.execute("SELECT 1").fetchone()
     except Exception as e:  # noqa: BLE001
         raise HTTPException(503, f"database unavailable: {type(e).__name__}")
-    return {"ok": True, "schema_version": db.SCHEMA_VERSION}
+    return {"ok": True, "version": version.VERSION,
+            "schema_version": db.SCHEMA_VERSION}

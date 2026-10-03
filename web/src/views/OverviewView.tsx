@@ -1,8 +1,13 @@
 import { useQuery } from '@tanstack/react-query';
+import { useNavigate } from 'react-router-dom';
+import Button from '@mui/material/Button';
+import type { AccountRow } from '../types';
 import Alert from '@mui/material/Alert';
 import Box from '@mui/material/Box';
 import Card from '@mui/material/Card';
 import CardContent from '@mui/material/CardContent';
+import CheckCircleIcon from '@mui/icons-material/CheckCircle';
+import RadioButtonUncheckedIcon from '@mui/icons-material/RadioButtonUnchecked';
 import Chip from '@mui/material/Chip';
 import Stack from '@mui/material/Stack';
 import Tooltip from '@mui/material/Tooltip';
@@ -37,8 +42,15 @@ const fmtCurrency = (amount: number, currency: string) =>
 export function OverviewView() {
   usePageTitle('Overview');
   const mode = useTheme().palette.mode;
+  const navigate = useNavigate();
   const ov = useQuery<OverviewPayload>({ queryKey: ['overview'],
     queryFn: () => api<OverviewPayload>('/api/overview') });
+  const accounts = useQuery<AccountRow[]>({ queryKey: ['accounts'],
+    queryFn: () => api<AccountRow[]>('/api/accounts') });
+  // First-run onboarding: an install with no provider accounts yet shows the
+  // setup checklist (dismissed per-browser until the first account exists).
+  const onboarding = (accounts.data?.length ?? 0) === 0
+    && localStorage.getItem('omnicloud-onboarded') !== '1';
 
   if (ov.isPending) return <Typography sx={{ color: 'text.secondary' }}>Loading…</Typography>;
   if (ov.isError) return <Alert severity="error">{(ov.error as Error).message}</Alert>;
@@ -72,6 +84,41 @@ export function OverviewView() {
   return (
     <Stack spacing={3}>
       <PageHeader title="Overview" subtitle="Fleet condition, spend, and traffic — every number provider-reported." />
+
+      {onboarding && (
+        <Card>
+          <CardContent>
+            <Stack spacing={1.5}>
+              <Typography variant="h5">Set up your panel</Typography>
+              <Typography variant="body2" sx={{ color: 'text.secondary' }}>
+                Three steps and your fleet is on the panel.
+              </Typography>
+              {[
+                ['Add a provider account', 'Credentials holds your Hetzner or LeaseWeb API token - encrypted, never displayed back.',
+                 '/credentials', 'Open Credentials'],
+                ['Wait for the first sync', 'The panel imports the fleet and its traffic numbers on its own (a minute or two).',
+                 null, null],
+                ['Compare plans, order prototypes', 'The catalog carries all 7 providers with prices, traffic rules, and extra-IP costs.',
+                 '/catalog', 'Open Catalog'],
+              ].map(([title, line, to, cta], i) => (
+                <Stack key={i} direction="row" spacing={1.5} sx={{ alignItems: 'flex-start' }}>
+                  {i === 0 ? <CheckCircleIcon sx={{ color: 'success.main', mt: 0.5 }} />
+                           : <RadioButtonUncheckedIcon sx={{ color: 'text.secondary', mt: 0.5 }} />}
+                  <Stack sx={{ flex: 1 }}>
+                    <Typography variant="body2" sx={{ fontWeight: 600 }}>{title}</Typography>
+                    <Typography variant="caption" sx={{ color: 'text.secondary' }}>{line}</Typography>
+                  </Stack>
+                  {to && cta && <Button size="small" onClick={() => navigate(to as string)}>{cta}</Button>}
+                </Stack>
+              ))}
+              <Button size="small" sx={{ alignSelf: 'flex-start' }}
+                      onClick={() => { localStorage.setItem('omnicloud-onboarded', '1'); location.reload(); }}>
+                Dismiss
+              </Button>
+            </Stack>
+          </CardContent>
+        </Card>
+      )}
 
       {/* The instrument row: traffic dominates (design.md 5), fleet is a
           sentence, overage carries the one decision the operator may owe. */}

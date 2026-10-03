@@ -6,7 +6,9 @@ import Skeleton from '@mui/material/Skeleton';
 import Stack from '@mui/material/Stack';
 import TextField from '@mui/material/TextField';
 import Typography from '@mui/material/Typography';
-import { api, put } from '../api';
+import { api, post, put } from '../api';
+import Chip from '@mui/material/Chip';
+import Tooltip from '@mui/material/Tooltip';
 import type { AccountRow } from '../types';
 import { PageHeader } from '../components/PageHeader';
 import { Toast } from '../components/Toast';
@@ -116,7 +118,88 @@ export function SettingsView() {
         )}
         {error && <Alert severity="error">{error}</Alert>}
       </Stack>
+
+      <UpdatePanel onToast={(m, sev) => setToast({ message: m, severity: sev })} />
       <Toast msg={toast} onClose={() => setToast(null)} />
+    </Stack>
+  );
+}
+
+interface UpdateState {
+  current: string; latest: string | null; repo: string;
+  checked_at: string | null; notes: string | null; url: string | null;
+  error: string | null; applying: boolean;
+}
+
+function UpdatePanel({ onToast }: { onToast: (m: string, s?: 'success' | 'error') => void }) {
+  const u = useQuery<UpdateState>({ queryKey: ['update'],
+    queryFn: () => api<UpdateState>('/api/update/status') });
+  const qc = useQueryClient();
+  const [applying, setApplying] = useState(false);
+  if (u.isPending) return null;
+  const d = u.data!;
+  const available = !!d.latest && d.latest !== d.current;
+  return (
+    <Stack spacing={1.5} sx={{ maxWidth: 560 }}>
+      <Stack direction="row" spacing={1.5} sx={{ alignItems: 'center' }}>
+        <Typography variant="subtitle1">Panel update</Typography>
+        <Chip size="small" variant="outlined" className="num" label={`v${d.current}`} />
+      </Stack>
+      <Typography variant="body2" sx={{ color: 'text.secondary' }}>
+        Checks GitHub ({d.repo}) daily; the apply button pulls the latest code
+        and restarts the panel.
+      </Typography>
+      {available && (
+        <Alert severity="info" icon={false}>
+          <Stack spacing={0.5}>
+            <Typography variant="body2">
+              <b>v{d.latest}</b> is available (running v{d.current})
+              {d.url && <> — <a href={d.url} target="_blank" rel="noreferrer">release notes</a></>}
+            </Typography>
+            {d.notes && <Typography variant="caption" sx={{ color: 'text.secondary',
+              whiteSpace: 'pre-wrap', maxHeight: 120, overflowY: 'auto', display: 'block' }}>
+              {d.notes}
+            </Typography>}
+          </Stack>
+        </Alert>
+      )}
+      {!available && d.checked_at && (
+        <Typography variant="caption" sx={{ color: 'text.secondary' }}>
+          up to date · last checked {new Date(d.checked_at).toLocaleString()}
+        </Typography>
+      )}
+      {d.error && (
+        <Typography variant="caption" sx={{ color: 'text.secondary' }}>
+          last check failed: {d.error}
+        </Typography>
+      )}
+      <Stack direction="row" spacing={1}>
+        <Button size="small" variant="outlined" disabled={d.applying || applying}
+                onClick={async () => {
+                  await post('/api/update/check');
+                  qc.invalidateQueries({ queryKey: ['update'] });
+                }}>
+          Check now
+        </Button>
+        {available && (
+          <Tooltip title="Pulls the latest code, rebuilds the panel, and restarts it. Your data (database, credentials, settings) is untouched.">
+            <Button size="small" variant="contained" color="primary"
+                    disabled={applying || d.applying}
+                    onClick={async () => {
+                      setApplying(true);
+                      try {
+                        const r = await post<{ detail?: string }>('/api/update/apply');
+                        onToast(r.detail ?? 'update running', 'success');
+                      } catch (e) {
+                        onToast((e as Error).message, 'error');
+                        setApplying(false);
+                      }
+                    }}>
+              {applying || d.applying ? 'Updating…' : `Update to v${d.latest}`}
+            </Button>
+          </Tooltip>
+        )}
+      </Stack>
     </Stack>
   );
 }

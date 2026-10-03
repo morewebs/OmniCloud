@@ -51,8 +51,8 @@ export async function api<T = unknown>(path: string, init?: RequestInit): Promis
   return r.json() as Promise<T>;
 }
 
-export function post(path: string, body?: unknown) {
-  return api(path, { method: 'POST', body: JSON.stringify(body ?? {}) });
+export function post<T = unknown>(path: string, body?: unknown) {
+  return api<T>(path, { method: 'POST', body: JSON.stringify(body ?? {}) });
 }
 export function patch(path: string, body: unknown) {
   return api(path, { method: 'PATCH', body: JSON.stringify(body) });

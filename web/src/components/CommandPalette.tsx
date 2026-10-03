@@ -53,7 +53,7 @@ export function CommandPalette({ open, onClose, onNavigate }: {
       { label: 'Fleet', hint: 'page', to: '/fleet' },
       { label: 'Catalog', hint: 'page', to: '/catalog' },
       { label: 'Orders', hint: 'page', to: '/orders' },
-      { label: 'Allowances & billing', hint: 'page', to: '/allowances' },
+      { label: 'Billing', hint: 'page', to: '/allowances' },
       { label: 'Credentials', hint: 'page', to: '/credentials' },
       { label: 'Adapters', hint: 'page', to: '/adapters' },
     ];

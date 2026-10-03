@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
-import { NavLink, Route, Routes, useNavigate } from 'react-router-dom';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { NavLink, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
+import { useIsFetching, useQuery, useQueryClient } from '@tanstack/react-query';
 import AppBar from '@mui/material/AppBar';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
@@ -47,12 +47,22 @@ import { LoginView } from './views/LoginView';
 import type { FleetResponse } from './types';
 
 const DRAWER_W = 240;
+const APPBAR_H = 56;
 
-// Active nav: tinted brand surface + brand icon + weight, not a whisper.
+// route -> title, shared by the mobile AppBar label and document.title
+const ROUTE_TITLES: Record<string, string> = {
+  '/': 'Overview', '/overview': 'Overview', '/fleet': 'Fleet', '/catalog': 'Catalog',
+  '/orders': 'Orders', '/allowances': 'Billing', '/credentials': 'Credentials',
+  '/adapters': 'Adapters', '/users': 'Users', '/settings': 'Settings',
+};
+
+// Active nav: tinted brand surface + brand icon + weight. Uses the theme
+// token so the wash follows the dark-mode brand variant, not a light hex.
 const navSx = {
   mb: 0.25,
   '&.active': {
-    bgcolor: 'rgba(94, 106, 210, 0.10)',
+    bgcolor: 'rgba(124, 124, 240, 0.14)',
+    '&:hover': { bgcolor: 'rgba(124, 124, 240, 0.18)' },
     '& .MuiListItemIcon-root': { color: 'primary.main' },
     '& .MuiListItemText-primary': { fontWeight: 600, color: 'primary.main' },
   },
@@ -66,6 +76,7 @@ function Shell({ user, themeMode, onToggleTheme }: {
   const qc = useQueryClient();
   const theme = useTheme();
   const navigate = useNavigate();
+  const location = useLocation();
   const isDesktop = useMediaQuery(theme.breakpoints.up('md'));
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
@@ -95,13 +106,17 @@ function Shell({ user, themeMode, onToggleTheme }: {
   }, []);
 
   const errCount = Object.values(fleet.data?.sync ?? {}).filter(s => s.last_error).length;
+  const currentLabel = ROUTE_TITLES[location.pathname] ?? 'Overview';
+  useEffect(() => {
+    document.title = `${currentLabel} · OmniCloud`;
+  }, [currentLabel]);
 
   const NAV = [
     { to: '/overview', label: 'Overview', icon: <SpaceDashboardIcon /> },
     { to: '/fleet', label: 'Fleet', icon: <DnsIcon /> },
     { to: '/catalog', label: 'Catalog', icon: <StorefrontIcon /> },
     { to: '/orders', label: 'Orders', icon: <ReceiptLongIcon /> },
-    { to: '/allowances', label: 'Allowances & billing', icon: <CloudSyncIcon /> },
+    { to: '/allowances', label: 'Billing', icon: <CloudSyncIcon /> },
     { to: '/credentials', label: 'Credentials', icon: <KeyIcon /> },
     { to: '/adapters', label: 'Adapters', icon: <ExtensionIcon /> },
   ];
@@ -111,7 +126,7 @@ function Shell({ user, themeMode, onToggleTheme }: {
   ];
 
   const drawer = (
-    <List sx={{ pt: 1, px: 1 }}>
+    <List sx={{ pt: 1, px: 1 }} aria-label="Main navigation">
       {NAV.map(n => (
         <ListItemButton key={n.to} component={NavLink} to={n.to}
                         onClick={() => setDrawerOpen(false)}
@@ -123,6 +138,8 @@ function Shell({ user, themeMode, onToggleTheme }: {
       {user.role === 'admin' && (
         <>
           <Divider sx={{ my: 1 }} />
+          <Typography variant="overline" sx={{ display: 'block', px: 2, pb: 0.5,
+            color: 'text.secondary', fontSize: '0.625rem' }}>Admin</Typography>
           {ADMIN_NAV.map(n => (
             <ListItemButton key={n.to} component={NavLink} to={n.to}
                             onClick={() => setDrawerOpen(false)}
@@ -136,48 +153,62 @@ function Shell({ user, themeMode, onToggleTheme }: {
     </List>
   );
 
+  const DATA_KEYS = ['fleet', 'overview', 'catalog', 'orders', 'allowances',
+    'accounts', 'adapters', 'billing'];
+  const isFetchingAny = useIsFetching() > 0;
+  const isMac = typeof navigator !== 'undefined' && /Mac/.test(navigator.platform);
+
   return (
     <Box sx={{ display: 'flex' }}>
       <AppBar position="fixed" color="inherit" elevation={0}
               sx={{ borderBottom: 1, borderColor: 'divider', zIndex: t => t.zIndex.drawer + 1 }}>
-        <Toolbar sx={{ minHeight: 56, gap: 1 }}>
+        <Toolbar sx={{ minHeight: APPBAR_H, gap: 1 }}>
           {!isDesktop && (
             <IconButton size="small" edge="start" onClick={() => setDrawerOpen(true)}
                          aria-label="Open navigation">
               <MenuIcon fontSize="small" />
             </IconButton>
           )}
-          <Typography variant="h6" sx={{ mr: 2, letterSpacing: '-0.02em', fontWeight: 600 }}>
+          <Typography variant="h6" sx={{ mr: 1.5, letterSpacing: '-0.02em', fontWeight: 600 }}>
             OmniCloud
           </Typography>
-          <Box sx={{ flex: 1 }} />
-          <Button size="small" startIcon={<SearchIcon />} onClick={() => setPaletteOpen(true)}
-                  sx={{ color: 'text.secondary', mr: 1 }}>
-            Search
-            <Typography className="num" variant="caption" sx={{ ml: 1, color: 'text.secondary',
-              border: 1, borderColor: 'divider', borderRadius: 1, px: 0.75 }}>
-              Ctrl K
+          {!isDesktop && (
+            <Typography variant="body2" sx={{ color: 'text.secondary' }} noWrap>
+              {currentLabel}
             </Typography>
-          </Button>
+          )}
+          <Box sx={{ flex: 1 }} />
+          <Tooltip title={`Search ${isMac ? '⌘K' : 'Ctrl K'}`}>
+            <IconButton size="small" onClick={() => setPaletteOpen(true)}
+                        aria-label="Search (Ctrl K)">
+              <SearchIcon fontSize="small" />
+            </IconButton>
+          </Tooltip>
           {errCount > 0 && (
             <Tooltip title={Object.entries(fleet.data?.sync ?? {})
               .filter(([, s]) => s.last_error)
               .map(([id, s]) => `Account ${id}: ${s.last_error}`).join('\n')}>
-              <Chip size="small" color="warning" variant="outlined"
+              <Chip size="small" color="warning" variant="outlined" component="button"
+                    onClick={() => navigate('/credentials')} clickable
                     label={`${errCount} sync error${errCount > 1 ? 's' : ''}`} />
             </Tooltip>
           )}
           <Button size="small" startIcon={<RefreshIcon />}
-                  onClick={() => qc.invalidateQueries()} disabled={fleet.isFetching}>
+                  onClick={() => DATA_KEYS.forEach(k => qc.invalidateQueries({ queryKey: [k] }))}
+                  disabled={isFetchingAny}>
             Refresh
           </Button>
           <IconButton size="small" onClick={onToggleTheme}
                       aria-label="Toggle dark mode">
             {themeMode === 'dark' ? <LightModeIcon fontSize="small" /> : <DarkModeIcon fontSize="small" />}
           </IconButton>
-          <Chip size="small" variant="outlined" label={`${user.username} · ${user.role}`} />
-          <IconButton size="small" onClick={() => post('/api/auth/logout').then(() => location.reload())}
-                      aria-label="Sign out">
+          <Chip size="small" variant="outlined" sx={{ display: { xs: 'none', sm: 'inline-flex' } }}
+                label={`${user.username} · ${user.role}`} />
+          <IconButton size="small" aria-label="Sign out"
+                      onClick={async () => {
+                        try { await post('/api/auth/logout'); } catch { /* session gone either way */ }
+                        window.location.reload();
+                      }}>
             <LogoutIcon fontSize="small" />
           </IconButton>
         </Toolbar>
@@ -185,17 +216,17 @@ function Shell({ user, themeMode, onToggleTheme }: {
 
       {isDesktop ? (
         <Drawer variant="permanent" sx={{ width: DRAWER_W, flexShrink: 0,
-          '& .MuiDrawer-paper': { width: DRAWER_W, boxSizing: 'border-box', pt: '64px' } }}>
+          '& .MuiDrawer-paper': { width: DRAWER_W, boxSizing: 'border-box', pt: `${APPBAR_H + 8}px` } }}>
           {drawer}
         </Drawer>
       ) : (
         <Drawer variant="temporary" open={drawerOpen} onClose={() => setDrawerOpen(false)}
-                sx={{ '& .MuiDrawer-paper': { width: DRAWER_W, pt: '64px' } }}>
+                sx={{ '& .MuiDrawer-paper': { width: DRAWER_W, pt: `${APPBAR_H + 8}px` } }}>
           {drawer}
         </Drawer>
       )}
 
-      <Box component="main" sx={{ flexGrow: 1, p: 3, pt: '72px', maxWidth: 1600, minWidth: 0 }}>
+      <Box component="main" sx={{ flexGrow: 1, p: 3, pt: `${APPBAR_H + 24}px`, maxWidth: 1600, minWidth: 0 }}>
         <Routes>
           <Route path="/" element={<OverviewView />} />
           <Route path="/overview" element={<OverviewView />} />
@@ -239,7 +270,16 @@ export default function App({ themeMode, onToggleTheme }: {
     retry: false,
   });
 
-  if (me.isPending || status.isPending) return null;
+  if (me.isPending || status.isPending) {
+    // no blank white screen while auth resolves
+    return (
+      <Box sx={{ minHeight: '100dvh', display: 'grid', placeItems: 'center' }}>
+        <Typography variant="h6" sx={{ fontWeight: 600, letterSpacing: '-0.02em' }}>
+          OmniCloud
+        </Typography>
+      </Box>
+    );
+  }
   if (me.isError) {
     return <LoginView needsSetup={!!status.data?.needs_setup} />;
   }

@@ -221,11 +221,15 @@ class LeasewebAdapter(ProviderAdapter):
         resources (cpu/ram/disk) the type schema carries. One Plan per
         (type, region)."""
         plans = []
+        region_failures: list[str] = []
         for region in await self._regions():
             try:
                 data = await self.h.get_json("/instanceTypes", params={"region": region})
             except AdapterError:
-                continue  # one region's failure must not kill the catalog
+                # Data honesty: a partial catalog is not a success. Raise at the
+                # end so the previous catalog stays instead of vanishing plans.
+                region_failures.append(region)
+                continue
             for t in data.get("instanceTypes", []):
                 res = t.get("resources") or {}
                 prices = t.get("prices") or {}
@@ -254,6 +258,10 @@ class LeasewebAdapter(ProviderAdapter):
                     ),
                     billing_model="monthly invoice (term contracts) or hourly prepaid",
                 ))
+        if region_failures:
+            raise AdapterError(
+                f"partial catalog refused: {len(region_failures)} region(s) failed "
+                f"({', '.join(region_failures[:5])}) - keeping the previous catalog")
         return plans
 
     async def _regions(self) -> list[str]:

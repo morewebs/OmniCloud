@@ -42,6 +42,7 @@ class GcoreCatalogAdapter(ProviderAdapter):
     async def list_plans(self) -> list[Plan]:
         regions = await self._get_json(REGIONS_URL)
         plans: list[Plan] = []
+        region_failures: list[str] = []
         for region in regions.get("results", []):
             rid, rcode = region.get("id"), region.get("technical_name")
             if rid is None:
@@ -49,7 +50,11 @@ class GcoreCatalogAdapter(ProviderAdapter):
             try:
                 flavors = await self._get_json(FLAVORS_URL, params={"region_id": rid})
             except httpx.HTTPError:
-                continue  # one region failing must not kill the catalog
+                # Data honesty: a partial catalog is not a success. Track and
+                # raise at the end so the previous catalog is kept instead of
+                # silently losing a region's plans while showing "fresh".
+                region_failures.append(str(rcode or rid))
+                continue
             prices = await self._region_prices(rcode)
             for f in flavors.get("results", []):
                 name = f.get("name", "")
@@ -77,6 +82,11 @@ class GcoreCatalogAdapter(ProviderAdapter):
                     ),
                     billing_model="prepaid pay-as-you-go wallet (per-minute)",
                 ))
+        if region_failures:
+            from .base import AdapterError
+            raise AdapterError(
+                f"partial catalog refused: {len(region_failures)} region(s) failed "
+                f"({', '.join(region_failures[:5])}) - keeping the previous catalog")
         return plans
 
     async def _region_prices(self, region_code: str | None) -> dict[str, Decimal]:

@@ -212,3 +212,48 @@ def test_health_checks_the_database(client):
     r = client.get("/api/health")
     assert r.status_code == 200
     assert r.json()["ok"] is True
+
+
+async def test_partial_catalog_is_not_a_success():
+    """One region 500ing must NOT silently shrink the catalog: the adapter
+    raises, the store is skipped, the previous plans stay with a recorded
+    error."""
+    import httpx
+    from server import catalog
+    from server.adapters.base import AdapterError, Money, Plan
+    from server.adapters.gcore import GcoreCatalogAdapter
+
+    good = {"count": 1, "results": [
+        {"name": "g2s-shared-1-1-25", "vcpus": 1, "ram": 1, "disk": 25}]}
+    calls = {"regions": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        url = str(request.url)
+        if url.endswith("/regions"):
+            calls["regions"] += 1
+            return httpx.Response(200, json={"count": 2, "results": [
+                {"id": 7, "name": "Frankfurt", "technical_name": "FRN-2", "country": "DE"},
+                {"id": 9, "name": "Down", "technical_name": "DOWN-1", "country": "XX"}]})
+        if "basic_vms/flavors" in url:
+            if "region_id=9" in url:
+                return httpx.Response(500)  # one region is down
+            return httpx.Response(200, json=good)
+        if "vcc-items" in url:
+            return httpx.Response(200, json=[
+                {"name": "g2s-shared-1-1-25", "vmType": "standard",
+                 "priceMinute": "0.00107"}])
+        return httpx.Response(404)
+
+    a = GcoreCatalogAdapter(http=httpx.MockTransport(handler))
+    # seed a previous good catalog
+    catalog.store("gcore", [Plan(adapter="gcore", name="old-plan", location="FRN-2",
+                                price_monthly=Money(amount="1.00", currency="USD"))],
+                  "live", None)
+    with pytest.raises(AdapterError, match="partial catalog"):
+        plans = await a.list_plans()
+        catalog.store("gcore", plans, "live", None)
+    await a.close()
+    # the previous catalog survived
+    data = catalog.read()
+    rows = [r for r in data["plans"] if r["adapter"] == "gcore"]
+    assert [r["plan_name"] for r in rows] == ["old-plan"]

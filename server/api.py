@@ -220,25 +220,28 @@ def allowances(user: auth.User = Depends(auth.require_user)):
 
 @router.get("/billing/summary")
 def billing_summary(user: auth.User = Depends(auth.require_user)):
+    """Spend grouped per (adapter, currency) - EUR and USD are never silently
+    summed (the same rule /api/overview follows)."""
     with db.connect() as conn:
         rows = conn.execute("SELECT account_id, canonical FROM servers").fetchall()
-    totals: dict[str, dict] = {}
+    totals: dict[tuple, dict] = {}
     for row in rows:
         s = json.loads(row["canonical"])
-        key = s["adapter"]
-        t = totals.setdefault(key, {"adapter": key, "monthly_base_eur": 0.0,
-                                    "projected_overage_eur": 0.0, "servers": 0,
-                                    "price_not_exposed": False})
+        cur = (s.get("monthly_price") or {}).get("currency", "EUR")
+        key = (s["adapter"], cur)
+        t = totals.setdefault(key, {"adapter": s["adapter"], "currency": cur,
+                                    "monthly_base": 0.0, "projected_overage": 0.0,
+                                    "servers": 0, "price_not_exposed": False})
         t["servers"] += 1
         mp = s.get("monthly_price")
         if mp:
-            t["monthly_base_eur"] += float(mp["amount"])
+            t["monthly_base"] += float(mp["amount"])
         else:
             t["price_not_exposed"] = True
         al = s.get("allowance") or {}
         po = al.get("projected_overage_cost")
         if po:
-            t["projected_overage_eur"] += float(po["amount"])
+            t["projected_overage"] += float(po["amount"])
     return list(totals.values())
 
 

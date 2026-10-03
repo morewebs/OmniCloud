@@ -175,10 +175,10 @@ ALLOWANCES = [
 ]
 
 BILLING = [
-    {"adapter": "hetzner", "monthly_base_eur": 3.92 + 3.92 + 4.51 + 3.00 + 5.83,
-     "projected_overage_eur": 0.30, "servers": 5, "price_not_exposed": False},
-    {"adapter": "leaseweb", "monthly_base_eur": 0,
-     "projected_overage_eur": 0.0, "servers": 3, "price_not_exposed": True},
+    {"adapter": "hetzner", "currency": "EUR", "monthly_base": 3.92 + 3.92 + 4.51 + 3.00 + 5.83,
+     "projected_overage": 0.30, "servers": 5, "price_not_exposed": False},
+    {"adapter": "leaseweb", "currency": "EUR", "monthly_base": 0,
+     "projected_overage": 0.0, "servers": 3, "price_not_exposed": True},
 ]
 
 # ---- v2: catalog + orders + overview demo data --------------------------

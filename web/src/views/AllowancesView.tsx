@@ -38,8 +38,8 @@ export function AllowancesView() {
   usePageTitle('Billing');
   const fleet = useQuery<FleetResponse>({ queryKey: ['fleet'],
     queryFn: () => api<FleetResponse>('/api/fleet') });
-  const billing = useQuery<{ adapter: string; monthly_base_eur: number;
-    projected_overage_eur: number; servers: number; price_not_exposed: boolean }[]>({
+  const billing = useQuery<{ adapter: string; currency: string; monthly_base: number;
+    projected_overage: number; servers: number; price_not_exposed: boolean }[]>({
     queryKey: ['billing'], queryFn: () => api('/api/billing/summary') });
   const allowances = useQuery<AllowanceRow[]>({ queryKey: ['allowances'],
     queryFn: () => api<AllowanceRow[]>('/api/allowances') });
@@ -63,7 +63,17 @@ export function AllowancesView() {
   );
 
   const rows = allowances.data ?? [];
-  const totalOverage = (billing.data ?? []).reduce((a, b) => a + b.projected_overage_eur, 0);
+  const safePage = Math.min(page, Math.max(0, Math.ceil(rows.length / rowsPerPage) - 1));
+  // overage totals grouped per currency - never summed across currencies
+  const overageByCur = new Map<string, number>();
+  for (const b of billing.data ?? []) {
+    if (b.projected_overage > 0) {
+      overageByCur.set(b.currency,
+        (overageByCur.get(b.currency) ?? 0) + b.projected_overage);
+    }
+  }
+  const fmtCur = (cur: string, amt: number) =>
+    new Intl.NumberFormat('en', { style: 'currency', currency: cur }).format(amt);
 
   return (
     <Stack spacing={3}>
@@ -73,10 +83,10 @@ export function AllowancesView() {
       <Box>
         <Typography variant="subtitle1" gutterBottom>Billing exposure</Typography>
         {(billing.data ?? []).map(b => (
-          <Stack key={b.adapter} direction="row" spacing={2} sx={{ mb: 1, flexWrap: "wrap" }}>
+          <Stack key={`${b.adapter}-${b.currency}`} direction="row" spacing={2} sx={{ mb: 1, flexWrap: "wrap" }}>
             <Typography className="num" variant="body2">
-              {b.adapter}: €{b.monthly_base_eur.toFixed(2)}/mo base across {b.servers} servers
-              {b.projected_overage_eur > 0 && ` · €${b.projected_overage_eur.toFixed(2)} projected overage`}
+              {b.adapter} ({b.currency}): {fmtCur(b.currency, b.monthly_base)}/mo base across {b.servers} servers
+              {b.projected_overage > 0 && ` · ${fmtCur(b.currency, b.projected_overage)} projected overage`}
             </Typography>
             {b.price_not_exposed && (
               <Typography variant="caption" sx={{ color: 'text.secondary', fontStyle: 'italic' }}>
@@ -85,9 +95,13 @@ export function AllowancesView() {
             )}
           </Stack>
         ))}
-        <Typography variant="body2" sx={{ color: 'text.secondary' }}>
-          Projected overage total: <span className="num">€{totalOverage.toFixed(2)}</span>
-        </Typography>
+        {overageByCur.size > 0 && (
+          <Typography variant="body2" sx={{ color: 'text.secondary' }}>
+            Projected overage total:{' '}
+            {[...overageByCur.entries()].map(([cur, amt]) =>
+              <span key={cur} className="num">{fmtCur(cur, amt)}</span>).join(' + ')}
+          </Typography>
+        )}
       </Box>
 
       <Box sx={{ overflowX: 'auto' }}>
@@ -103,7 +117,7 @@ export function AllowancesView() {
             </TableRow>
           </TableHead>
           <TableBody>
-            {rows.slice(page * rowsPerPage, (page + 1) * rowsPerPage).map(r => (
+            {rows.slice(safePage * rowsPerPage, (safePage + 1) * rowsPerPage).map(r => (
               <TableRow key={`${r.account_id}:${r.provider_id}`}>
                 <TableCell>{r.name}</TableCell>
                 <TableCell>{r.adapter}</TableCell>
@@ -130,7 +144,9 @@ export function AllowancesView() {
                 <TableCell align="right">
                   <Value
                     value={r.allowance.projected_overage_cost
-                      ? `€${Number(r.allowance.projected_overage_cost.amount).toFixed(2)}` : null}
+                      ? new Intl.NumberFormat('en', { style: 'currency',
+                          currency: r.allowance.projected_overage_cost.currency })
+                          .format(Number(r.allowance.projected_overage_cost.amount)) : null}
                   />
                 </TableCell>
                 <TableCell align="right"><span className="num">{fmtTime(r.last_seen_at)}</span></TableCell>
@@ -142,7 +158,7 @@ export function AllowancesView() {
       <TablePagination
         component="div"
         count={rows.length}
-        page={page}
+        page={safePage}
         onPageChange={(_, p) => setPage(p)}
         rowsPerPage={rowsPerPage}
         onRowsPerPageChange={(e) => { setRowsPerPage(parseInt(e.target.value, 10)); setPage(0); }}

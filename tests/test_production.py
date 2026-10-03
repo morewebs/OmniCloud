@@ -257,3 +257,29 @@ async def test_partial_catalog_is_not_a_success():
     data = catalog.read()
     rows = [r for r in data["plans"] if r["adapter"] == "gcore"]
     assert [r["plan_name"] for r in rows] == ["old-plan"]
+
+
+async def test_billing_summary_groups_per_currency(client):
+    """A USD-billed server never sums into a EUR line."""
+    client.post("/api/auth/setup", json={"username": "admin", "password": "pw123456"},
+                headers=HDRS)
+    r = client.post("/api/accounts", headers=HDRS,
+                    json={"adapter": "fake", "name": "a", "token": "fixture-token"})
+    assert r.status_code == 200, r.text
+    from server import db
+    # one EUR server, one USD server
+    import json as _json
+    with db.connect() as conn:
+        for sid, cur, amt in (("fake-1", "EUR", 10.0), ("fake-2", "USD", 5.0)):
+            conn.execute(
+                "INSERT INTO servers(account_id, provider_id, canonical, last_seen_at, first_seen_at) "
+                "VALUES(1, ?, ?, '2026-01-01T00:00:00', '2026-01-01T00:00:00')",
+                (sid, _json.dumps({
+                    "provider_id": sid, "name": f"srv-{sid}", "adapter": "fake",
+                    "account_id": 1, "status": "running",
+                    "monthly_price": {"amount": str(amt), "currency": cur}})))
+    summary = client.get("/api/billing/summary", headers=HDRS).json()
+    curs = sorted(s["currency"] for s in summary)
+    assert curs == ["EUR", "USD"], f"mixed currencies were collapsed: {summary}"
+    for s in summary:
+        assert isinstance(s["monthly_base"], float)

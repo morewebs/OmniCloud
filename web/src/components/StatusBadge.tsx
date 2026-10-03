@@ -1,6 +1,6 @@
 import Chip from '@mui/material/Chip';
 
-// Status = colored dot + mandatory text (never a bare dot).
+// Status = colored chip + mandatory text (never a bare dot).
 // Colors are the desaturated trio from the design contracts.
 const MAP: Record<string, { label: string; color: 'success' | 'error' | 'default' | 'warning' }> = {
   running: { label: 'Running', color: 'success' },
@@ -17,7 +17,9 @@ export function StatusBadge({ status }: { status: string }) {
       label={s.label}
       color={s.color === 'default' ? undefined : s.color}
       variant="outlined"
-      sx={{ height: 20 }}
+      sx={status === 'unknown'
+        ? { height: 20, borderStyle: 'dashed' } // unknown ≠ off: dashed border
+        : { height: 20 }}
     />
   );
 }

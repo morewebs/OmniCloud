@@ -26,7 +26,8 @@ export function Value({
   if (value == null) {
     return (
       <Tooltip title={pendingHint ?? 'Waiting for the next sync from this provider'}>
-        <Typography component="span" variant="body2" sx={{ color: 'text.secondary' }}>
+        <Typography component="span" tabIndex={0} variant="body2"
+                    sx={{ color: 'text.secondary', cursor: 'help' }}>
           —
         </Typography>
       </Tooltip>

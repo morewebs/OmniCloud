@@ -122,7 +122,7 @@ export function CatalogView() {
       </Stack>
 
       {rows.length === 0
-        ? <EmptyState mark="◎" line="No plans match the filters."
+        ? <EmptyState mark="catalog" line="No plans match the filters."
                       actionLabel="Reset filters"
                       onAction={() => { setAdapterF('all'); setLocF('all'); setMaxPrice('');
                                         setMinTraffic(''); setIpOnly(false); }} />

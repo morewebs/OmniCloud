@@ -59,7 +59,7 @@ export function OrdersView() {
                   subtitle="Prototype pipeline: draft, confirm, execute. No servers are created or billed." />
 
       {orders.data!.length === 0
-        ? <EmptyState mark="⌘" line="No orders yet. Browse the catalog to place one."
+        ? <EmptyState mark="orders" line="No orders yet. Browse the catalog to place one."
                       actionLabel="Open catalog" onAction={() => navigate('/catalog')} />
         : (
           <Box sx={{ overflowX: 'auto' }}>

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { NavLink, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { useIsFetching, useQuery, useQueryClient } from '@tanstack/react-query';
+import Alert from '@mui/material/Alert';
 import AppBar from '@mui/material/AppBar';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
@@ -86,12 +87,14 @@ function Shell({ user, themeMode, onToggleTheme }: {
     queryFn: () => api<FleetResponse>('/api/fleet'),
   });
 
-  // SSE -> invalidate (live values swap in place)
+  // SSE -> invalidate (live values swap in place); a dead stream shows a
+  // banner instead of the panel silently freezing
+  const [streamDown, setStreamDown] = useState(false);
   useEffect(() => subscribeStream((ev) => {
     if (ev === 'servers_updated') qc.invalidateQueries({ queryKey: ['fleet'] });
     if (ev === 'catalog_updated') qc.invalidateQueries({ queryKey: ['catalog'] });
     if (ev === 'order') qc.invalidateQueries({ queryKey: ['orders'] });
-  }), [qc]);
+  }, () => setStreamDown(true), () => setStreamDown(false)), [qc]);
 
   // Ctrl+K command palette
   useEffect(() => {
@@ -214,6 +217,14 @@ function Shell({ user, themeMode, onToggleTheme }: {
         </Toolbar>
       </AppBar>
 
+      {streamDown && (
+        <Alert severity="warning" icon={false}
+               sx={{ position: 'fixed', top: APPBAR_H, left: '50%', transform: 'translateX(-50%)',
+                     zIndex: t => t.zIndex.drawer + 1, py: 0.25, px: 1.5 }}>
+          Live updates disconnected — data may be stale
+        </Alert>
+      )}
+
       {isDesktop ? (
         <Drawer variant="permanent" sx={{ width: DRAWER_W, flexShrink: 0,
           '& .MuiDrawer-paper': { width: DRAWER_W, boxSizing: 'border-box', pt: `${APPBAR_H + 8}px` } }}>
@@ -262,12 +273,12 @@ export default function App({ themeMode, onToggleTheme }: {
   const me = useQuery({
     queryKey: ['me'],
     queryFn: () => api<{ id: number; username: string; role: string }>('/api/auth/me'),
-    retry: false,
+    retry: false, refetchOnWindowFocus: false,
   });
   const status = useQuery({
     queryKey: ['auth-status'],
     queryFn: () => api<{ needs_setup: boolean }>('/api/auth/status'),
-    retry: false,
+    retry: false, refetchOnWindowFocus: false,
   });
 
   if (me.isPending || status.isPending) {

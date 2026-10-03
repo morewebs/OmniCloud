@@ -14,7 +14,7 @@ import { lightTheme, darkTheme } from './theme';
 
 const queryClient = new QueryClient({
   defaultOptions: {
-    queries: { retry: 1, staleTime: 30_000, refetchOnWindowFocus: false },
+    queries: { retry: 1, staleTime: 30_000, refetchOnWindowFocus: true },
   },
 });
 

@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import Alert from '@mui/material/Alert';
 import Box from '@mui/material/Box';
@@ -40,15 +40,19 @@ import { StatTile } from '../components/StatTile';
 export function FleetView() {
   const qc = useQueryClient();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const fleet = useQuery<FleetResponse>({ queryKey: ['fleet'],
     queryFn: () => api<FleetResponse>('/api/fleet') });
   const adapters = useQuery<AdapterInfo[]>({ queryKey: ['adapters'],
     queryFn: () => api<AdapterInfo[]>('/api/adapters') });
   const me = useQuery({ queryKey: ['me'],
     queryFn: () => api<{ role: string }>('/api/auth/me') });
-  const [search, setSearch] = useState(() =>
-    new URLSearchParams(window.location.search).get('q') ?? '');
-  const [detail, setDetail] = useState<Server | null>(null);
+  const search = searchParams.get('q') ?? '';
+  const setSearch = (q: string) => {
+    setSearchParams(q ? { q } : {}, { replace: true });
+    setPage(0); // a new filter must never strand the pagination on an empty page
+  };
+  const [detailKey, setDetailKey] = useState<string | null>(null);
   // Large fleets: paginate the table (25/50/100 per page) instead of
   // rendering hundreds of meter rows at once.
   const [page, setPage] = useState(0);
@@ -61,9 +65,18 @@ export function FleetView() {
       || (s.ipv4 ?? '').includes(q) || s.adapter.includes(q)
       || (s.region ?? '').toLowerCase().includes(q));
   }, [fleet.data, search]);
+  // clamp page when the filtered set shrinks (e.g. filters changed elsewhere)
+  const safePage = Math.min(page, Math.max(0, Math.ceil(rows.length / rowsPerPage) - 1));
+
+  // the open dialog re-derives the LIVE row from the cache — after a rename
+  // or reboot the dialog shows the new state, not the snapshot from open-time
+  const detail = detailKey
+    ? fleet.data?.accounts.flatMap(a => a.servers)
+        .find(s => `${s.account_id}:${s.provider_id}` === detailKey) ?? null
+    : null;
 
   const pagedRows = useMemo(
-    () => rows.slice(page * rowsPerPage, (page + 1) * rowsPerPage),
+    () => rows.slice(safePage * rowsPerPage, (safePage + 1) * rowsPerPage),
     [rows, page, rowsPerPage]);
 
   const allServers = fleet.data?.accounts.flatMap(a => a.servers) ?? [];
@@ -155,7 +168,7 @@ export function FleetView() {
               const syncInfo = fleet.data!.sync[String(s.account_id)];
               return (
                 <TableRow key={`${s.account_id}:${s.provider_id}`} hover
-                          onClick={() => setDetail(s)} sx={{ cursor: 'pointer' }}>
+                          onClick={() => setDetailKey(`${s.account_id}:${s.provider_id}`)} sx={{ cursor: 'pointer' }}>
                   <TableCell><StatusBadge status={s.status} /></TableCell>
                   <TableCell>
                     <StaleStamp lastSeenAt={s.last_seen_at}
@@ -185,7 +198,7 @@ export function FleetView() {
       <TablePagination
         component="div"
         count={rows.length}
-        page={page}
+        page={safePage}
         onPageChange={(_, p) => setPage(p)}
         rowsPerPage={rowsPerPage}
         onRowsPerPageChange={(e) => { setRowsPerPage(parseInt(e.target.value, 10)); setPage(0); }}
@@ -197,7 +210,7 @@ export function FleetView() {
           server={detail}
           isAdmin={me.data?.role === 'admin'}
           capabilities={adapters.data?.find(a => a.key === detail.adapter)?.capabilities ?? []}
-          onClose={() => setDetail(null)}
+          onClose={() => setDetailKey(null)}
           onDone={() => qc.invalidateQueries()}
         />
       )}

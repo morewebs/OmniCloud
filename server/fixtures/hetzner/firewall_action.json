@@ -1,0 +1,10 @@
+{
+  "actions": [
+    {
+      "id": 999002,
+      "command": "apply_firewall",
+      "status": "running",
+      "progress": 0
+    }
+  ]
+}

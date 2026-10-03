@@ -1,0 +1,9 @@
+{
+  "action": {
+    "id": 999001,
+    "command": "poweron_server",
+    "status": "running",
+    "progress": 0,
+    "started": "2026-10-03T10:00:00+00:00"
+  }
+}

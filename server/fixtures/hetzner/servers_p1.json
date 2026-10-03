@@ -1,0 +1,37 @@
+{
+  "servers": [
+    {
+      "id": 11111111,
+      "name": "srv-fsn1-01",
+      "status": "running",
+      "created": "2026-08-13T09:24:00+00:00",
+      "public_net": {
+        "ipv4": {"ip": "203.0.113.10"},
+        "firewalls": [{"id": 1710054, "status": "applied"}]
+      },
+      "server_type": {"id": 1, "name": "cx22"},
+      "location": {"id": 1, "name": "fsn1", "country": "DE"},
+      "labels": {"alias": "edge-a"},
+      "included_traffic": 2199102253056,
+      "outgoing_traffic": 512000000000,
+      "ingoing_traffic": 102400000000
+    },
+    {
+      "id": 11111112,
+      "name": "srv-hil1-02",
+      "status": "off",
+      "created": "2026-07-02T14:01:00+00:00",
+      "public_net": {
+        "ipv4": {"ip": "203.0.113.11"},
+        "firewalls": []
+      },
+      "server_type": {"id": 1, "name": "cx22"},
+      "location": {"id": 2, "name": "hil1", "country": "FI"},
+      "labels": {},
+      "included_traffic": 2199102253056,
+      "outgoing_traffic": 0,
+      "ingoing_traffic": 0
+    }
+  ],
+  "meta": {"pagination": {"page": 1, "per_page": 50, "last_page": 1}}
+}

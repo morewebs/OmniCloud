@@ -1,0 +1,23 @@
+{
+  "adapter": "tube",
+  "source_url": "https://tube-hosting.com/pricing",
+  "source_note": "public pricing page, manually transcribed - TODO verify during provider research",
+  "last_verified": "2026-10-03",
+  "billing_model": "prepaid wallet",
+  "plans": [
+    {
+      "name": "placeholder-tube-1",
+      "location": "nl",
+      "cpu_cores": 2,
+      "ram_gb": 4,
+      "disk_gb": 80,
+      "disk_type": "ssd",
+      "price_monthly": {"amount": "0.00", "currency": "EUR", "vat_inclusive": null},
+      "included_traffic_bytes": null,
+      "counting": null,
+      "extra_ip": {"kind": "public ipv4", "included": 1, "price": null,
+                    "note": "not published; contact provider"},
+      "deprecated": true
+    }
+  ]
+}

@@ -1,0 +1,21 @@
+# local state
+omnicloud.db*
+server/.devkey
+*.db
+
+# python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# node
+web/node_modules/
+web/dist/
+
+# built SPA (rebuild with: cd web && npm run build)
+server/static/
+
+# editor
+.vscode/
+.idea/

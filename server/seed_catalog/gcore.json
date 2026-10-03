@@ -1,0 +1,23 @@
+{
+  "adapter": "gcore",
+  "source_url": "https://gcore.com/cloud/pricing",
+  "source_note": "public pricing page, manually transcribed - TODO verify during provider research (live tokenless pricing API may exist)",
+  "last_verified": "2026-10-03",
+  "billing_model": "prepaid wallet",
+  "plans": [
+    {
+      "name": "placeholder-gcore-1",
+      "location": "az1",
+      "cpu_cores": 2,
+      "ram_gb": 4,
+      "disk_gb": 50,
+      "disk_type": "nvme",
+      "price_monthly": {"amount": "0.00", "currency": "USD", "vat_inclusive": null},
+      "included_traffic_bytes": null,
+      "counting": null,
+      "extra_ip": {"kind": "public ipv4", "included": 1, "price": null,
+                    "note": "not published; contact provider"},
+      "deprecated": true
+    }
+  ]
+}

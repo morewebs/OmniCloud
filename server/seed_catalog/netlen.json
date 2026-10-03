@@ -1,0 +1,23 @@
+{
+  "adapter": "netlen",
+  "source_url": "https://netlen.com/pricing",
+  "source_note": "public pricing page, manually transcribed - TODO verify during provider research",
+  "last_verified": "2026-10-03",
+  "billing_model": "monthly invoice",
+  "plans": [
+    {
+      "name": "placeholder-netlen-1",
+      "location": "istanbul",
+      "cpu_cores": 4,
+      "ram_gb": 8,
+      "disk_gb": 200,
+      "disk_type": "nvme ssd",
+      "price_monthly": {"amount": "0.00", "currency": "USD", "vat_inclusive": null},
+      "included_traffic_bytes": null,
+      "counting": null,
+      "extra_ip": {"kind": "public ipv4", "included": 1, "price": null,
+                    "note": "not published; contact provider"},
+      "deprecated": true
+    }
+  ]
+}

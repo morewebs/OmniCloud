@@ -1,0 +1,45 @@
+{
+  "instances": [
+    {
+      "id": "5f8f2e6a-1111-2222-3333-a7f3b2c4d9e0",
+      "type": "lsw.m3.medium",
+      "resources": {
+        "cpu": {"value": 2, "unit": "vCPU"},
+        "memory": {"value": 8, "unit": "GiB"},
+        "publicNetworkSpeed": {"value": 1, "unit": "Gbps"}
+      },
+      "region": "eu-west-3",
+      "reference": "srv-ams1-01",
+      "startedAt": "2026-09-11T08:15:00Z",
+      "state": "RUNNING",
+      "productType": "INSTANCE",
+      "rootDiskSize": 80,
+      "contract": {"billingFrequency": 1, "term": 0, "type": "MONTHLY"},
+      "ips": [
+        {"ip": "203.0.113.20", "prefixLength": "32", "version": 4,
+         "nullRouted": false, "mainIp": true, "networkType": "PUBLIC"}
+      ]
+    },
+    {
+      "id": "5f8f2e6a-4444-5555-6666-b2c4a7f3d9e1",
+      "type": "lsw.m3.small",
+      "resources": {
+        "cpu": {"value": 1, "unit": "vCPU"},
+        "memory": {"value": 4, "unit": "GiB"},
+        "publicNetworkSpeed": {"value": 1, "unit": "Gbps"}
+      },
+      "region": "eu-west-3",
+      "reference": "srv-fra1-05",
+      "startedAt": "2026-06-25T18:40:00Z",
+      "state": "STOPPED",
+      "productType": "INSTANCE",
+      "rootDiskSize": 50,
+      "contract": {"billingFrequency": 1, "term": 0, "type": "HOURLY"},
+      "ips": [
+        {"ip": "203.0.113.21", "prefixLength": "32", "version": 4,
+         "nullRouted": false, "mainIp": true, "networkType": "PUBLIC"}
+      ]
+    }
+  ],
+  "_metadata": {"totalCount": 2, "offset": 0, "limit": 50}
+}

@@ -1,0 +1,29 @@
+{
+  "_metadata": {
+    "from": "2026-10-01T00:00:00Z",
+    "to": "2026-10-04T00:00:00Z",
+    "granularity": "DAY",
+    "aggregation": "SUM",
+    "unit": "B",
+    "summary": {
+      "downPublic": {"average": 267500000000, "expected": 267500000000, "total": 535000000000, "peak": {"value": 275000000000, "timestamp": "2026-10-02T00:00:00Z"}},
+      "upPublic": {"average": 124000000000, "expected": 124000000000, "total": 248000000000, "peak": {"value": 128000000000, "timestamp": "2026-10-02T00:00:00Z"}}
+    }
+  },
+  "metrics": {
+    "downPublic": {
+      "values": [
+        {"value": 260000000000, "timestamp": "2026-10-01T00:00:00Z"},
+        {"value": 275000000000, "timestamp": "2026-10-02T00:00:00Z"}
+      ],
+      "unit": "B"
+    },
+    "upPublic": {
+      "values": [
+        {"value": 120000000000, "timestamp": "2026-10-01T00:00:00Z"},
+        {"value": 128000000000, "timestamp": "2026-10-02T00:00:00Z"}
+      ],
+      "unit": "B"
+    }
+  }
+}

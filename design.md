@@ -1,5 +1,14 @@
 # Design System: OmniCloud
 
+> **Supersession note (v1):** Sections 1-3 (the custom Geist/Zinc visual system) are
+> superseded by **Material Design (Material 3 via MUI)**: neutral light theme, standard
+> MUI components and elevation, desaturated status colors mapped to Material's
+> success/warning/error slots. Typography uses the default Material stack; the
+> mono-for-numbers rule survives as a `tabular-nums` utility on all numeric cells.
+> Sections 4-10 (UI contracts) remain binding: canonical entity model, capability-based
+> actions, data honesty rules, credential masking, confirmation dialogs, provider as
+> facet, open-source hygiene.
+
 > **What OmniCloud is:** an open-source, multi-provider cloud control panel that aggregates
 > server fleets, traffic allowances, and billing exposure across cloud providers. First-class
 > adapters: **Hetzner** and **Leaseweb**. Roadmap adapters: OVH, Gcore, Netlen, Lightnode,

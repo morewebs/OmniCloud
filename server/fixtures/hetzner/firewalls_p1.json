@@ -1,0 +1,28 @@
+{
+  "firewalls": [
+    {
+      "id": 1710054,
+      "name": "batch-edge-fs",
+      "rules": [
+        {"direction": "in", "protocol": "tcp", "port": "22", "source_ips": []},
+        {"direction": "in", "protocol": "tcp", "port": "2083", "source_ips": []},
+        {"direction": "in", "protocol": "tcp", "port": "62050-62055", "source_ips": []}
+      ],
+      "applied_to": [
+        {"type": "server", "server": {"id": 4211111}},
+        {"type": "server", "server": {"id": 4211112}}
+      ]
+    },
+    {
+      "id": 1710055,
+      "name": "batch-edge-us",
+      "rules": [
+        {"direction": "in", "protocol": "tcp", "port": "22", "source_ips": ["198.51.100.0/24"]}
+      ],
+      "applied_to": [
+        {"type": "server", "server": {"id": 4211113}}
+      ]
+    }
+  ],
+  "meta": {"pagination": {"page": 1, "per_page": 50, "last_page": 1}}
+}

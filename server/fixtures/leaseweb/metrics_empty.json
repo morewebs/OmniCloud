@@ -1,0 +1,17 @@
+{
+  "_metadata": {
+    "from": "2026-10-01T00:00:00Z",
+    "to": "2026-10-04T00:00:00Z",
+    "granularity": "DAY",
+    "aggregation": "SUM",
+    "unit": "B",
+    "summary": {
+      "downPublic": {"average": 0, "expected": 0, "total": 0, "peak": {"value": 0, "timestamp": "2026-10-01T00:00:00Z"}},
+      "upPublic": {"average": 0, "expected": 0, "total": 0, "peak": {"value": 0, "timestamp": "2026-10-01T00:00:00Z"}}
+    }
+  },
+  "metrics": {
+    "downPublic": {"values": [], "unit": "B"},
+    "upPublic": {"values": [], "unit": "B"}
+  }
+}

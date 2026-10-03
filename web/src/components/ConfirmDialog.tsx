@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import Alert from '@mui/material/Alert';
 import Button from '@mui/material/Button';
 import Dialog from '@mui/material/Dialog';
 import DialogActions from '@mui/material/DialogActions';
@@ -8,12 +9,14 @@ import DialogTitle from '@mui/material/DialogTitle';
 import TextField from '@mui/material/TextField';
 
 /**
- * Destructive-action confirmation: names the server, states irreversibility
- * in plain text. For delete, the operator must TYPE the server name - kept
+ * Destructive-action confirmation: names the target, states irreversibility
+ * in plain text. For delete, the operator must TYPE the target name - kept
  * annoying on purpose; the operating context lost 8 boxes to a wrong deletion.
+ * `children` renders extra controls (e.g. the rebuild image picker).
  */
 export function ConfirmDialog({
-  open, title, serverName, body, requireTyped, confirming, error, onConfirm, onClose,
+  open, title, serverName, body, requireTyped, confirming, error,
+  onConfirm, onClose, confirmLabel, children,
 }: {
   open: boolean;
   title: string;
@@ -24,16 +27,20 @@ export function ConfirmDialog({
   error?: string | null;
   onConfirm: () => void;
   onClose: () => void;
+  confirmLabel?: string;
+  children?: React.ReactNode;
 }) {
   const [typed, setTyped] = useState('');
-  const ready = !requireTyped || typed === serverName;
+  const ready = !requireTyped || typed.trim() === serverName;
+  const mismatch = requireTyped && typed.trim().length > 0 && !ready;
   return (
-    <Dialog open={open} onClose={onClose} maxWidth="xs" fullWidth>
+    <Dialog open={open} onClose={confirming ? undefined : onClose} maxWidth="xs" fullWidth>
       <DialogTitle>{title}</DialogTitle>
       <DialogContent>
         <DialogContentText>
           {body}
         </DialogContentText>
+        {children}
         {requireTyped && (
           <TextField
             autoFocus
@@ -41,24 +48,22 @@ export function ConfirmDialog({
             label={`Type "${serverName}" to confirm`}
             value={typed}
             onChange={(e) => setTyped(e.target.value)}
+            error={mismatch}
+            helperText={mismatch ? "Doesn't match — check spelling" : undefined}
             fullWidth
           />
         )}
-        {error && (
-          <DialogContentText color="error" sx={{ mt: 1 }}>
-            {error}
-          </DialogContentText>
-        )}
+        {error && <Alert severity="error" sx={{ mt: 1 }}>{error}</Alert>}
       </DialogContent>
       <DialogActions>
-        <Button onClick={onClose}>Cancel</Button>
+        <Button onClick={onClose} disabled={confirming}>Cancel</Button>
         <Button
           onClick={onConfirm}
           color="error"
           variant="contained"
           disabled={!ready || confirming}
         >
-          {confirming ? 'Working…' : 'Confirm'}
+          {confirming ? 'Working…' : (confirmLabel ?? 'Confirm')}
         </Button>
       </DialogActions>
     </Dialog>

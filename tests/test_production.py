@@ -59,3 +59,35 @@ def test_testclient_never_touches_the_network(monkeypatch):
         # give the catalog loop's startup pass a beat to (not) fire
         time.sleep(0.5)
     assert calls == [], f"test made outbound HTTP: {calls[:3]}"
+
+
+def test_double_execute_race_only_one_wins(uid):
+    """Two concurrent executes: exactly one wins; the loser gets a clear
+    OrderError. The atomic UPDATE is the guard."""
+    from server import catalog, orders
+    from server.adapters.base import IpOffer, Money, Plan
+    catalog.store("fake", [Plan(adapter="fake", name="plan-a", location="l",
+                                price_monthly=Money(amount="1.00", currency="EUR"),
+                                billing_model="x")], "live", None)
+    oid = orders.create_order(uid, "fake", "plan-a", "l", {})
+    orders.confirm(oid, uid)
+
+    import concurrent.futures
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as ex:
+        futs = [ex.submit(orders.execute, oid, uid) for _ in range(2)]
+        outcomes = []
+        for f in futs:
+            try:
+                f.result()
+                outcomes.append("ok")
+            except orders.OrderError:
+                outcomes.append("rejected")  # the loser sees a clear message
+    # both threads entered execute() believing the order was confirmed; the
+    # pre-check or the atomic UPDATE must reject exactly one of them
+    # ...but only ONE executor transitioned to executing
+    from server import db
+    with db.connect() as conn:
+        evs = conn.execute(
+            "SELECT status FROM order_events WHERE order_id=? AND status='executing'",
+            (oid,)).fetchall()
+    assert len(evs) == 1, f"{len(evs)} executing events - the race leaked through"

@@ -31,10 +31,19 @@ def _get(order_id: int) -> dict | None:
     return dict(row) if row else None
 
 
-def _transition(order_id: int, status: str, detail: str | None = None) -> None:
+def _transition(order_id: int, status: str, detail: str | None = None,
+                allowed_from: tuple[str, ...] | None = None) -> None:
+    """Atomic status change: the WHERE clause is the guard, so two concurrent
+    executes (or execute vs cancel) cannot both win - exactly one UPDATE
+    matches. allowed_from=None skips the guard (internal use)."""
     with db.connect() as conn:
-        conn.execute("UPDATE orders SET status=?, updated_at=? WHERE id=?",
-                     (status, db.now(), order_id))
+        cur = conn.execute(
+            "UPDATE orders SET status=?, updated_at=? WHERE id=?"
+            + (" AND status IN (%s)" % ",".join("?" * len(allowed_from)) if allowed_from else ""),
+            (status, db.now(), order_id, *allowed_from) if allowed_from
+            else (status, db.now(), order_id))
+        if cur.rowcount == 0:
+            raise OrderError(f"cannot set status {status} - the order moved on")
         conn.execute("INSERT INTO order_events(order_id, status, detail, created_at) "
                      "VALUES(?,?,?,?)",
                      (order_id, status, detail, db.now()))
@@ -97,7 +106,7 @@ def confirm(order_id: int, user_id: int) -> None:
     o = _get(order_id) or _raise_not_found(order_id)
     if o["status"] != "draft":
         raise OrderError(f"cannot confirm an order in status {o['status']}")
-    _transition(order_id, "confirmed", "order confirmed by operator")
+    _transition(order_id, "confirmed", "order confirmed by operator", ("draft",))
     audit.record(user_id, "order.confirm", f"order/{order_id}")
     _publish("order", {"order_id": order_id, "status": "confirmed"})
 
@@ -107,7 +116,7 @@ def cancel(order_id: int, user_id: int) -> None:
     if o["status"] not in ("draft", "confirmed"):
         raise OrderError(f"cannot cancel an order in status {o['status']} - "
                          "executing orders are already submitted")
-    _transition(order_id, "cancelled", "cancelled by operator")
+    _transition(order_id, "cancelled", "cancelled by operator", ("draft", "confirmed"))
     audit.record(user_id, "order.cancel", f"order/{order_id}")
     _publish("order", {"order_id": order_id, "status": "cancelled"})
 
@@ -117,7 +126,7 @@ def execute(order_id: int, user_id: int) -> None:
     o = _get(order_id) or _raise_not_found(order_id)
     if o["status"] != "confirmed":
         raise OrderError(f"cannot execute an order in status {o['status']}")
-    _transition(order_id, "executing", "provisioning started")
+    _transition(order_id, "executing", "provisioning started", ("confirmed",))
     _publish("order", {"order_id": order_id, "status": "executing"})
     # Spawn on the app loop (threadpool routes have none of their own).
     # No loop at all (tests with start_all disabled): run to completion inline
@@ -150,10 +159,12 @@ async def _execute_task(order_id: int, user_id: int, o: dict) -> None:
             await asyncio.sleep(3)
             pid = f"proto-{order_id}"
             with db.connect() as conn:
-                conn.execute(
+                cur = conn.execute(
                     "UPDATE orders SET status='provisioned', resulting_provider_id=?, "
-                    "updated_at=? WHERE id=?",
+                    "updated_at=? WHERE id=? AND status='executing'",
                     (pid, db.now(), order_id))
+                if cur.rowcount == 0:
+                    return  # the order moved on while we slept (cancel raced in) - stay quiet
                 conn.execute(
                     "INSERT INTO order_events(order_id, status, detail, created_at) "
                     "VALUES(?, 'provisioned', ?, ?)",
@@ -169,12 +180,14 @@ async def _execute_task(order_id: int, user_id: int, o: dict) -> None:
     except Exception as e:  # noqa: BLE001 - failures are states, not crashes
         msg = f"{type(e).__name__}: {e}"[:500]
         with db.connect() as conn:
-            conn.execute("UPDATE orders SET status='failed', updated_at=? WHERE id=?",
-                         (db.now(), order_id))
-            conn.execute("INSERT INTO order_events(order_id, status, detail, created_at) "
-                         "VALUES(?, 'failed', ?, ?)", (order_id, msg, db.now()))
-        audit.record(user_id, "order.failed", f"order/{order_id}", after={"error": msg})
-        _publish("order", {"order_id": order_id, "status": "failed"})
+            cur = conn.execute(
+                "UPDATE orders SET status='failed', updated_at=? WHERE id=? AND status='executing'",
+                (db.now(), order_id))
+            if cur.rowcount:
+                conn.execute("INSERT INTO order_events(order_id, status, detail, created_at) "
+                             "VALUES(?, 'failed', ?, ?)", (order_id, msg, db.now()))
+                audit.record(user_id, "order.failed", f"order/{order_id}", after={"error": msg})
+                _publish("order", {"order_id": order_id, "status": "failed"})
 
 
 def list_orders() -> list[dict]:

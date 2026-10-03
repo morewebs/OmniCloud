@@ -28,12 +28,6 @@ def _seed_catalog():
 
 
 @pytest.fixture(autouse=True)
-def uid():
-    # fresh temp DB per test (test_env); no teardown needed
-    return auth.create_user("ordop", "pw123456", role="admin")
-
-
-@pytest.fixture(autouse=True)
 def seed():
     _seed_catalog()
     yield

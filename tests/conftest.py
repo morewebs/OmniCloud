@@ -155,3 +155,10 @@ class FakeAdapter:
 
     async def close(self):
         pass
+
+
+@pytest.fixture
+def uid():
+    """An admin user id, for tests that mutate as an admin."""
+    from server import auth
+    return auth.create_user("ordop", "pw123456", role="admin")

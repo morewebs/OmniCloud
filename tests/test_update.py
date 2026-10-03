@@ -49,6 +49,7 @@ async def test_check_parses_github_release():
 
 async def test_check_failure_is_silent():
     from server import update
+    update._status.update(latest="9.9.9")  # stale from a previous check
     class DeadClient:
         def __init__(self, **kw): pass
         async def __aenter__(self): return self

@@ -49,7 +49,7 @@ async def check() -> dict:
                        notes=(rel.get("body") or "")[:2000],
                        url=rel.get("html_url"), error=None)
     except Exception as e:  # noqa: BLE001 - a failed check is not an incident
-        _status.update(checked_at=_now(), error=f"{type(e).__name__}: {e}"[:300])
+        _status.update(checked_at=_now(), latest=None, error=f"{type(e).__name__}: {e}"[:300])
         log.info("update check failed: %s", _status["error"])
     return status()
 

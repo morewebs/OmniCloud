@@ -224,6 +224,18 @@ function AddAccountDialog({ adapters, onClose, onDone }: {
             {list.filter(a => !a.source).map(a =>
               <MenuItem key={a.key} value={a.key}>{a.display_name}</MenuItem>)}
           </TextField>
+          {effAdapter === 'hetzner' && (
+            <Alert severity="info" icon={false}>
+              Create a read/write token at console.hetzner.com → Security →
+              API tokens, then paste it here.
+            </Alert>
+          )}
+          {effAdapter === 'leaseweb' && (
+            <Alert severity="info" icon={false}>
+              Create an API key at secure.leaseweb.com → API → API keys
+              (read/write for full panel features).
+            </Alert>
+          )}
           <TextField label="Account name" value={name}
                      onChange={e => setName(e.target.value)} size="small" required
                      helperText="A label, e.g. main or edge" />

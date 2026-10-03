@@ -736,7 +736,6 @@ async def stream(request: Request, user: auth.User = Depends(auth.require_user))
                                      "X-Accel-Buffering": "no"})
 
 
-@router.get("/health")
 # -- updates ------------------------------------------------------------------
 
 @router.get("/update/status")

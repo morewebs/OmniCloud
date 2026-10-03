@@ -91,7 +91,17 @@ function Shell({ user, themeMode, onToggleTheme }: {
   // banner instead of the panel silently freezing
   const [streamDown, setStreamDown] = useState(false);
   useEffect(() => subscribeStream((ev) => {
-    if (ev === 'servers_updated') qc.invalidateQueries({ queryKey: ['fleet'] });
+    if (ev === 'servers_updated') {
+      qc.invalidateQueries({ queryKey: ['fleet'] });
+      qc.invalidateQueries({ queryKey: ['server'] });   // open dialog sparkline
+      qc.invalidateQueries({ queryKey: ['overview'] });
+    }
+    if (ev === 'action') {
+      qc.invalidateQueries({ queryKey: ['fleet'] });
+      qc.invalidateQueries({ queryKey: ['server'] });
+      qc.invalidateQueries({ queryKey: ['overview'] });
+    }
+    if (ev === 'sync_error') qc.invalidateQueries({ queryKey: ['accounts'] });
     if (ev === 'catalog_updated') qc.invalidateQueries({ queryKey: ['catalog'] });
     if (ev === 'order') qc.invalidateQueries({ queryKey: ['orders'] });
   }, () => setStreamDown(true), () => setStreamDown(false)), [qc]);

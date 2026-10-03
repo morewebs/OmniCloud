@@ -70,8 +70,8 @@ export function OrderDialog({ plan, onClose, onDone }: {
       || `${i.name} ${i.version ?? ''} ${i.os}`.toLowerCase().includes(imgFilter.toLowerCase()));
 
   return (
-    <Dialog open onClose={onClose} maxWidth="sm" fullWidth>
-      <DialogTitle>Order {plan.name}</DialogTitle>
+    <Dialog aria-labelledby="omni-dlg-72" open onClose={onClose} maxWidth="sm" fullWidth>
+      <DialogTitle id="omni-dlg-72">Order {plan.name}</DialogTitle>
       <DialogContent>
         <Stack spacing={2} sx={{ pt: 1 }}>
           <Alert severity="info">

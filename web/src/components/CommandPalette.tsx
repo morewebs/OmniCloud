@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import Dialog from '@mui/material/Dialog';
 import InputBase from '@mui/material/InputBase';
 import List from '@mui/material/List';
@@ -126,6 +126,10 @@ export function CommandPalette({ open, onClose, onNavigate, isAdmin }: {
         <InputBase
           inputRef={inputRef}
           placeholder="Search pages, servers, orders, plans…"
+          aria-label="Command palette search"
+          role="combobox"
+          aria-expanded="true"
+          aria-controls="omni-palette-list"
           value={q}
           onChange={e => { setQ(e.target.value); setSel(0); }}
           onKeyDown={onKey}
@@ -133,7 +137,7 @@ export function CommandPalette({ open, onClose, onNavigate, isAdmin }: {
           autoFocus
         />
       </Stack>
-      <List dense disablePadding ref={listRef}
+      <List dense disablePadding ref={listRef} id="omni-palette-list"
             sx={{ maxHeight: 400, overflowY: 'auto' }}>
         {items.length === 0 && (
           <ListItemButton disabled>
@@ -144,7 +148,7 @@ export function CommandPalette({ open, onClose, onNavigate, isAdmin }: {
           const header = it.group !== lastGroup ? it.group : null;
           lastGroup = it.group;
           return (
-            <div key={it.to + it.label}>
+            <Fragment key={it.to + it.label}>
               {header && <ListSubheader sx={{ lineHeight: '24px', bgcolor: 'background.paper' }}>
                 {header}
               </ListSubheader>}
@@ -155,7 +159,7 @@ export function CommandPalette({ open, onClose, onNavigate, isAdmin }: {
                   <Typography variant="caption" sx={{ color: 'text.secondary' }} noWrap>{it.hint}</Typography>
                 </Stack>
               </ListItemButton>
-            </div>
+            </Fragment>
           );
         })}
       </List>

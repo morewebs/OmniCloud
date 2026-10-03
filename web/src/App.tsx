@@ -35,16 +35,21 @@ import DarkModeIcon from '@mui/icons-material/DarkMode';
 import SearchIcon from '@mui/icons-material/Search';
 import { api, post, subscribeStream } from './api';
 import { CommandPalette } from './components/CommandPalette';
-import { FleetView } from './views/FleetView';
-import { OverviewView } from './views/OverviewView';
-import { CatalogView } from './views/CatalogView';
-import { OrdersView } from './views/OrdersView';
-import { AllowancesView } from './views/AllowancesView';
-import { CredentialsView } from './views/CredentialsView';
-import { AdaptersView } from './views/AdaptersView';
-import { UsersView } from './views/UsersView';
-import { SettingsView } from './views/SettingsView';
+// Route-level code-splitting: the chart-heavy views (Overview, Fleet) stay
+// out of the login/admin first paint.
+import { lazy, Suspense } from 'react';
 import { LoginView } from './views/LoginView';
+import Skeleton from '@mui/material/Skeleton';
+import Stack from '@mui/material/Stack';
+const OverviewView = lazy(() => import('./views/OverviewView').then(m => ({ default: m.OverviewView })));
+const FleetView = lazy(() => import('./views/FleetView').then(m => ({ default: m.FleetView })));
+const CatalogView = lazy(() => import('./views/CatalogView').then(m => ({ default: m.CatalogView })));
+const OrdersView = lazy(() => import('./views/OrdersView').then(m => ({ default: m.OrdersView })));
+const AllowancesView = lazy(() => import('./views/AllowancesView').then(m => ({ default: m.AllowancesView })));
+const CredentialsView = lazy(() => import('./views/CredentialsView').then(m => ({ default: m.CredentialsView })));
+const AdaptersView = lazy(() => import('./views/AdaptersView').then(m => ({ default: m.AdaptersView })));
+const UsersView = lazy(() => import('./views/UsersView').then(m => ({ default: m.UsersView })));
+const SettingsView = lazy(() => import('./views/SettingsView').then(m => ({ default: m.SettingsView })));
 import type { FleetResponse } from './types';
 
 const DRAWER_W = 240;
@@ -120,9 +125,6 @@ function Shell({ user, themeMode, onToggleTheme }: {
 
   const errCount = Object.values(fleet.data?.sync ?? {}).filter(s => s.last_error).length;
   const currentLabel = ROUTE_TITLES[location.pathname] ?? 'Overview';
-  useEffect(() => {
-    document.title = `${currentLabel} · OmniCloud`;
-  }, [currentLabel]);
 
   const NAV = [
     { to: '/overview', label: 'Overview', icon: <SpaceDashboardIcon /> },
@@ -166,8 +168,6 @@ function Shell({ user, themeMode, onToggleTheme }: {
     </List>
   );
 
-  const DATA_KEYS = ['fleet', 'overview', 'catalog', 'orders', 'allowances',
-    'accounts', 'adapters', 'billing'];
   const isFetchingAny = useIsFetching() > 0;
   const isMac = typeof navigator !== 'undefined' && /Mac/.test(navigator.platform);
 
@@ -207,7 +207,7 @@ function Shell({ user, themeMode, onToggleTheme }: {
             </Tooltip>
           )}
           <Button size="small" startIcon={<RefreshIcon />}
-                  onClick={() => DATA_KEYS.forEach(k => qc.invalidateQueries({ queryKey: [k] }))}
+                  onClick={() => qc.invalidateQueries()}
                   disabled={isFetchingAny}>
             Refresh
           </Button>
@@ -248,6 +248,9 @@ function Shell({ user, themeMode, onToggleTheme }: {
       )}
 
       <Box component="main" sx={{ flexGrow: 1, p: 3, pt: `${APPBAR_H + 24}px`, maxWidth: 1600, minWidth: 0 }}>
+        <Suspense fallback={<Stack spacing={1.5} sx={{ pt: 2 }}>
+          {Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} variant="rounded" height={44} />)}
+        </Stack>}>
         <Routes>
           <Route path="/" element={<OverviewView />} />
           <Route path="/overview" element={<OverviewView />} />
@@ -261,6 +264,7 @@ function Shell({ user, themeMode, onToggleTheme }: {
           {user.role === 'admin' && <Route path="/settings" element={<SettingsView />} />}
           <Route path="*" element={<Navigate2 to="/overview" />} />
         </Routes>
+        </Suspense>
       </Box>
 
       <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} isAdmin={user.role === 'admin'}

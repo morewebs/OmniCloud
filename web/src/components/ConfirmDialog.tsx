@@ -37,8 +37,8 @@ export function ConfirmDialog({
                       Delete: 'Deleting…', Remove: 'Removing…' }[confirmLabel ?? 'Confirm']
                     ?? `${confirmLabel ?? 'Confirm'}ing…`;
   return (
-    <Dialog open={open} onClose={confirming ? undefined : onClose} maxWidth="xs" fullWidth>
-      <DialogTitle>{title}</DialogTitle>
+    <Dialog aria-labelledby="omni-dlg-39" open={open} onClose={confirming ? undefined : onClose} maxWidth="xs" fullWidth>
+      <DialogTitle id="omni-dlg-39">{title}</DialogTitle>
       <DialogContent>
         <DialogContentText>
           {body}

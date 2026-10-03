@@ -175,8 +175,8 @@ function AddUserDialog({ onClose, onDone }: { onClose: () => void; onDone: () =>
   };
 
   return (
-    <Dialog open onClose={onClose} maxWidth="xs" fullWidth>
-      <DialogTitle>Add user</DialogTitle>
+    <Dialog aria-labelledby="omni-dlg-177" open onClose={onClose} maxWidth="xs" fullWidth>
+      <DialogTitle id="omni-dlg-177">Add user</DialogTitle>
       <DialogContent>
         <Stack spacing={2} sx={{ pt: 1 }}>
           <TextField label="Username" value={username}

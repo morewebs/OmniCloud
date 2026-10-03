@@ -78,14 +78,17 @@ export function CatalogView() {
     return true;
   }), [allPlans, adapterF, locF, ipOnly, maxPrice, minTraffic]);
 
+  const [syncing, setSyncing] = useState(false);
   const syncNow = async () => {
-    setToast({ message: 'Refreshing catalog…' });
+    setSyncing(true);
     try {
       await post('/api/catalog/sync');
       qc.invalidateQueries({ queryKey: ['catalog'] });
       setToast({ message: 'Catalog refreshed', severity: 'success' });
     } catch (e) {
       setToast({ message: (e as Error).message, severity: 'error' });
+    } finally {
+      setSyncing(false);
     }
   };
 
@@ -97,7 +100,8 @@ export function CatalogView() {
       <PageHeader
         title="Catalog"
         subtitle="Plans across providers with declared traffic and extra-IP capability."
-        actions={isAdmin && <Button variant="contained" onClick={syncNow}>Refresh catalog</Button>}
+        actions={isAdmin && <Button variant="contained" disabled={syncing} onClick={syncNow}>
+          {syncing ? 'Refreshing…' : 'Refresh catalog'}</Button>}
       />
 
       <Stack direction="row" spacing={1.5} sx={{ flexWrap: 'wrap', gap: 1.5, alignItems: 'center' }}>
@@ -133,6 +137,12 @@ export function CatalogView() {
                       onAction={() => { setAdapterF('all'); setLocF('all'); setMaxPrice('');
                                         setMinTraffic(''); setIpOnly(false); }} />
         : (
+          <>
+          {rows.length > 200 && (
+            <Typography variant="caption" sx={{ color: 'text.secondary' }}>
+              showing the first 200 of {rows.length} matching plans — narrow the filters
+            </Typography>
+          )}
           <Box sx={{ overflowX: 'auto', maxHeight: 620 }}>
             <Table size="small" stickyHeader>
               <TableHead>
@@ -210,6 +220,7 @@ export function CatalogView() {
               </TableBody>
             </Table>
           </Box>
+          </>
         )}
 
       {compare.length > 1 && (
@@ -234,8 +245,8 @@ export function CatalogView() {
 
 function CompareDialog({ plans, onClose }: { plans: Plan[]; onClose: () => void }) {
   return (
-    <Dialog open onClose={onClose} maxWidth="md" fullWidth>
-      <DialogTitle>Compare plans</DialogTitle>
+    <Dialog aria-labelledby="omni-dlg-247" open onClose={onClose} maxWidth="md" fullWidth>
+      <DialogTitle id="omni-dlg-247">Compare plans</DialogTitle>
       <DialogContent>
         <Table size="small">
           <TableHead>

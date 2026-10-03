@@ -210,8 +210,8 @@ function AddAccountDialog({ adapters, onClose, onDone }: {
   };
 
   return (
-    <Dialog open onClose={onClose} maxWidth="xs" fullWidth>
-      <DialogTitle>Add provider account</DialogTitle>
+    <Dialog aria-labelledby="omni-dlg-212" open onClose={onClose} maxWidth="xs" fullWidth>
+      <DialogTitle id="omni-dlg-212">Add provider account</DialogTitle>
       <DialogContent>
         <Stack spacing={2} sx={{ pt: 1 }}>
           <TextField select label="Provider" value={effAdapter}

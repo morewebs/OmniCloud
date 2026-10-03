@@ -70,8 +70,8 @@ export function FirewallDialog({ open, serverName, attachedFirewalls, onDetach, 
   };
 
   return (
-    <Dialog open={open} onClose={busy ? undefined : onClose} maxWidth="sm" fullWidth>
-      <DialogTitle>Firewall - {serverName}</DialogTitle>
+    <Dialog aria-labelledby="omni-dlg-72" open={open} onClose={busy ? undefined : onClose} maxWidth="sm" fullWidth>
+      <DialogTitle id="omni-dlg-72">Firewall - {serverName}</DialogTitle>
       <DialogContent dividers>
         <Stack spacing={2}>
           <Alert severity="info" icon={false}>
@@ -165,8 +165,8 @@ export function AttachFirewallDialog({ open, serverName, firewalls, excludeIds, 
     [firewalls, exclude, search]);
 
   return (
-    <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
-      <DialogTitle>Attach firewall to {serverName}</DialogTitle>
+    <Dialog aria-labelledby="omni-dlg-167" open={open} onClose={onClose} maxWidth="sm" fullWidth>
+      <DialogTitle id="omni-dlg-167">Attach firewall to {serverName}</DialogTitle>
       <DialogContent dividers>
         <Stack spacing={2}>
           {loading && <LinearProgress />}
@@ -212,8 +212,31 @@ export function AttachFirewallDialog({ open, serverName, firewalls, excludeIds, 
 /** Create-new path: for a fresh server without any firewall. Kept minimal
  * (a handful of allow rules); bulk rule management belongs to the provider
  * console when a firewall already carries 100+ rules. */
-const PORT_RE = /^$|^(\d{1,5}(-\d{1,5})?)(,(\d{1,5}(-\d{1,5})?))*$/;
-const CIDR_RE = /^$|^\d{1,3}(\.\d{1,3}){3}(\/\d{1,2})?$/;
+const PORT_RE = /^(\d{1,5}(-\d{1,5})?)(,\d{1,5}(-\d{1,5})?)*$/;
+const CIDR_RE = /^\d{1,3}(\.\d{1,3}){3}(\/\d{1,2})?$/;
+
+/** port list/range is well-formed AND every number is 0..65535 */
+function portOk(port: string): boolean {
+  if (!port) return true; // "any"
+  if (!PORT_RE.test(port)) return false;
+  return port.split(',').every(part => {
+    const [a, b] = part.split('-').map(Number);
+    return a <= 65535 && (b === undefined || (b <= 65535 && b > a));
+  });
+}
+
+/** each comma-separated CIDR is 4 octets 0-255 (+ prefix 0-32 if present) */
+function cidrOk(source: string): boolean {
+  if (!source.trim()) return true; // "any"
+  return source.split(',').map(s => s.trim()).every(c => {
+    if (!c) return false;
+    const [ip, prefix] = c.split('/');
+    if (!CIDR_RE.test(c)) return false;
+    const octets = ip.split('.').map(Number);
+    if (octets.some(o => o > 255)) return false;
+    return prefix === undefined || (Number(prefix) <= 32);
+  });
+}
 
 export function CreateFirewallDialog({ open, serverName, onCreate, onClose, busy, error }: {
   open: boolean;
@@ -232,13 +255,12 @@ export function CreateFirewallDialog({ open, serverName, onCreate, onClose, busy
     setRules(rs => rs.map((r, j) => (j === i ? { ...r, ...patch } : r)));
 
   const hasInbound = rules.some(r => r.direction === 'in');
-  const portsValid = rules.every(r => PORT_RE.test(r.port));
-  const cidrsValid = rules.every(r =>
-    r.source_ips.split(',').map(s => s.trim()).every(c => CIDR_RE.test(c)));
+  const portsValid = rules.every(r => portOk(r.port));
+  const cidrsValid = rules.every(r => cidrOk(r.source_ips));
 
   return (
-    <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
-      <DialogTitle>Create firewall for {serverName}</DialogTitle>
+    <Dialog aria-labelledby="omni-dlg-261" open={open} onClose={onClose} maxWidth="sm" fullWidth>
+      <DialogTitle id="omni-dlg-261">Create firewall for {serverName}</DialogTitle>
       <DialogContent dividers>
         <Stack spacing={2}>
           <TextField size="small" label="Firewall name" value={name}
@@ -268,7 +290,7 @@ export function CreateFirewallDialog({ open, serverName, onCreate, onClose, busy
                          sx={{ width: 130 }} size="small" placeholder="any"
                          disabled={r.protocol === 'icmp'}
                          error={!portsValid}
-                         helperText={!portsValid ? 'e.g. 22 or 80,443 or 60000-61000' : undefined} />
+                         helperText={!portsValid ? 'e.g. 22 or 80,443 or 60000-61000 (max 65535)' : undefined} />
               <TextField label="Source IPs" value={r.source_ips}
                          onChange={e => set(i, { source_ips: e.target.value })}
                          sx={{ width: 220 }} size="small" placeholder="any, or CIDRs"

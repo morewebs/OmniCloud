@@ -148,13 +148,13 @@ function OrderDetailDialog({ orderId, onClose }: { orderId: number; onClose: () 
     queryFn: () => api<OrderRow & { events: { status: string; detail: string | null; created_at: string }[] }>(
       `/api/orders/${orderId}`) });
   if (o.isPending) return null;
-  if (o.isError) return <Dialog open onClose={onClose}><DialogContent>
+  if (o.isError) return <Dialog aria-labelledby="omni-dlg-150" open onClose={onClose}><DialogContent>
     <Alert severity="error">{(o.error as Error).message}</Alert></DialogContent></Dialog>;
   const d = o.data!;
   const e_ = est(d);
   return (
-    <Dialog open onClose={onClose} maxWidth="xs" fullWidth>
-      <DialogTitle>Order #{d.id} · {d.plan_name}</DialogTitle>
+    <Dialog aria-labelledby="omni-dlg-155" open onClose={onClose} maxWidth="xs" fullWidth>
+      <DialogTitle id="omni-dlg-155">Order #{d.id} · {d.plan_name}</DialogTitle>
       <DialogContent>
         <Stack spacing={2}>
           <Stack direction="row" spacing={1} sx={{ flexWrap: 'wrap', gap: 0.5 }}>

@@ -388,8 +388,8 @@ function ServerDialog({ server, isAdmin, capabilities, onClose, onDone }: {
 
   return (
     <>
-      <Dialog open onClose={onClose} maxWidth="md" fullWidth>
-        <DialogTitle>{server.name}</DialogTitle>
+      <Dialog aria-labelledby="omni-dlg-390" open onClose={onClose} maxWidth="md" fullWidth>
+        <DialogTitle id="omni-dlg-390">{server.name}</DialogTitle>
         <DialogContent>
           <Stack spacing={2} sx={{ pt: 1 }}>
             {error && <Alert severity="error">{error}</Alert>}

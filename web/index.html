@@ -6,14 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="color-scheme" content="light dark" />
     <title>OmniCloud</title>
-    <script>
-      // paint the right background before the bundle loads — no white strobe
-      // on dark-mode reloads
-      if (window.matchMedia('(prefers-color-scheme: dark)').matches
-          && localStorage.getItem('omnicloud-theme') !== 'light') {
-        document.documentElement.style.background = '#09090B';
-      }
-    </script>
+    <script src="/theme-init.js"></script>
   </head>
   <body>
     <div id="root"></div>

@@ -151,7 +151,9 @@ class FakeAdapter:
         return (await self.list_servers())[0]
 
     async def perform_action(self, cap, server_id, params):
-        from server.adapters.base import ActionResult
+        from server.adapters.base import ActionResult, AdapterError
+        if server_id not in ("fake-1",):
+            raise AdapterError(f"no such server: {server_id}")  # truthful: unknown ids fail
         return ActionResult(detail="fake done")
 
     async def close(self):

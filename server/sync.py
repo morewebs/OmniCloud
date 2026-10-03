@@ -284,4 +284,6 @@ async def run_action(account_id: int, provider_id: str, kind: str,
                 (db.now(), msg, action_id),
             )
         publish("action", {"account_id": account_id, "kind": kind, "status": "failed"})
-        raise
+        # do NOT re-raise: the failure is recorded; the route reads the row and
+        # returns a 502 with this message. Re-raising made that path dead code.
+        return action_id

@@ -198,7 +198,7 @@ async def _loop() -> None:
         hours = float(db.get_setting("catalog_sync_interval_hours") or 24)
         # ponytail: single loop for all providers; per-provider tasks if one
         # slow provider ever blocks the rest
-        await asyncio.sleep(max(0.25, hours) * 3600)
+        await asyncio.sleep(max(1.0, hours) * 3600)  # floor 1h: no typo-driven hammering
 
 
 def start() -> None:

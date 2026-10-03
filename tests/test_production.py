@@ -181,3 +181,34 @@ def client(monkeypatch):
     app = create_app()
     with TestClient(app) as c:
         yield c
+
+
+def test_path_traversal_blocked(client):
+    """Static route must never serve anything outside server/static."""
+    for evil in ("/..%2f..%2f..%2fserver%2fsecrets.py",
+                 "/%2e%2e/%2e%2e/server/secrets.py",
+                 "/../../server/secrets.py"):
+        r = client.get(evil)
+        # falls back to the SPA index (client route) - never the file body
+        assert b"scrypt" not in r.content
+        assert b"MASTER_KEY" not in r.content
+
+
+def test_failed_action_returns_502_with_provider_message(client):
+    """A provider-side failure returns 502 + the recorded message, not 500."""
+    client.post("/api/auth/setup", json={"username": "admin", "password": "pw123456"},
+                headers=HDRS)
+    r = client.post("/api/accounts", headers=HDRS,
+                    json={"adapter": "fake", "name": "a", "token": "fixture-token"})
+    aid = r.json()["id"]
+    # FakeAdapter.perform_action raises for an unknown server id
+    r = client.post(f"/api/servers/{aid}/nonexistent/actions", headers=HDRS,
+                    json={"kind": "reboot", "params": {}})
+    assert r.status_code == 502
+    assert r.json()["detail"]
+
+
+def test_health_checks_the_database(client):
+    r = client.get("/api/health")
+    assert r.status_code == 200
+    assert r.json()["ok"] is True

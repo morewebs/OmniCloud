@@ -1,7 +1,7 @@
 """Provider accounts + credential CRUD and the adapter registry."""
 from __future__ import annotations
 
-from . import db, secrets
+from . import config, db, secrets
 from .adapters.base import Capability, ProviderAdapter
 from .adapters.hetzner import HetznerAdapter
 from .adapters.leaseweb import LeasewebAdapter
@@ -94,11 +94,12 @@ def build_adapter(account: dict) -> ProviderAdapter:
     return cls(account["id"], account["name"], token)
 
 
-def interval_for(account_id: int, adapter_key: str) -> float:
-    """Sync interval in minutes, from settings; default 5."""
-    default = db.get_setting("sync_default_interval") or "5"
+def interval_for(account_id: int, adapter_key: str = "") -> float:
+    """Sync interval in minutes, from settings; the env default feeds the
+    DB default (OMNICLOUD_SYNC_INTERVAL_MIN was previously dead config)."""
+    default = db.get_setting("sync_default_interval") or str(config.DEFAULT_SYNC_INTERVAL_MIN)
     raw = db.get_setting(f"sync_interval:{account_id}") or default
     try:
         return max(1.0, float(raw))
     except ValueError:
-        return 5.0
+        return float(config.DEFAULT_SYNC_INTERVAL_MIN)

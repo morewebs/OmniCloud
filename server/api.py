@@ -734,4 +734,10 @@ async def stream(request: Request, user: auth.User = Depends(auth.require_user))
 
 @router.get("/health")
 def health():
+    """Liveness + readiness: the DB must actually answer."""
+    try:
+        with db.connect() as conn:
+            conn.execute("SELECT 1").fetchone()
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(503, f"database unavailable: {type(e).__name__}")
     return {"ok": True, "schema_version": db.SCHEMA_VERSION}

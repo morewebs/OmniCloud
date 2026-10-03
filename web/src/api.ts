@@ -34,9 +34,15 @@ export async function api<T = unknown>(path: string, init?: RequestInit): Promis
       ? `Server error (${r.status})` : `Request failed (${r.status})`);
     try {
       const j = await r.json();
-      // FastAPI {detail}; provider messages from the backend win over generic text
-      if (j?.detail) detail = String(j.detail);
+      // FastAPI {detail: "..."} — but 422 validation errors carry an ARRAY;
+      // only a string detail replaces the human text
+      if (typeof j?.detail === 'string') detail = j.detail;
     } catch { /* non-JSON body — keep the status text */ }
+    // Session expired mid-use: bounce to the login page once, globally -
+    // otherwise the operator is stranded on a dead dashboard.
+    if (r.status === 401 && !path.startsWith('/api/auth/')) {
+      window.location.reload();
+    }
     const err = new Error(detail) as Error & { status?: number };
     err.status = r.status;
     throw err;

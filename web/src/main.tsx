@@ -10,6 +10,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import CssBaseline from '@mui/material/CssBaseline';
 import { ThemeProvider } from '@mui/material/styles';
 import App from './App';
+import { ErrorBoundary } from './ErrorBoundary';
 import { lightTheme, darkTheme } from './theme';
 
 const queryClient = new QueryClient({
@@ -39,7 +40,9 @@ function ThemedApp() {
         <ThemeProvider theme={mode === 'dark' ? darkTheme : lightTheme}>
           <CssBaseline />
           <BrowserRouter>
-            <App themeMode={mode} onToggleTheme={toggle} />
+            <ErrorBoundary>
+              <App themeMode={mode} onToggleTheme={toggle} />
+            </ErrorBoundary>
           </BrowserRouter>
         </ThemeProvider>
       </QueryClientProvider>

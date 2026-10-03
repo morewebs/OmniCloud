@@ -67,8 +67,14 @@ export function CatalogView() {
     if (adapterF !== 'all' && p.adapter !== adapterF) return false;
     if (locF !== 'all' && p.location !== locF) return false;
     if (ipOnly && !p.extra_ip) return false;
-    if (maxPrice && p.price_monthly && Number(p.price_monthly.amount) > Number(maxPrice)) return false;
-    if (minTraffic && (p.included_traffic_bytes ?? 0) < Number(minTraffic) * 1e9) return false;
+    // NaN from free-text ("abc", "12,5") would make every comparison false and
+    // silently pass ALL rows - guard with isFinite
+    const maxN = Number(maxPrice);
+    const minN = Number(minTraffic);
+    if (Number.isFinite(maxN) && maxN > 0 && p.price_monthly
+        && Number(p.price_monthly.amount) > maxN) return false;
+    if (Number.isFinite(minN) && minN > 0
+        && (p.included_traffic_bytes ?? 0) < minN * 1e9) return false;
     return true;
   }), [allPlans, adapterF, locF, ipOnly, maxPrice, minTraffic]);
 
@@ -105,7 +111,7 @@ export function CatalogView() {
           <MenuItem value="all">All locations</MenuItem>
           {locations.map(l => <MenuItem key={l} value={l}>{l}</MenuItem>)}
         </TextField>
-        <TextField size="small" label="Max €/mo" value={maxPrice} className="num"
+        <TextField size="small" label="Max price/mo" value={maxPrice} className="num"
                    onChange={e => setMaxPrice(e.target.value)} sx={{ width: 100 }}
                    placeholder="any" />
         <TextField size="small" label="Min TB traffic" value={minTraffic} className="num"

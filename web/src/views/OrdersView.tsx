@@ -15,7 +15,13 @@ import TableCell from '@mui/material/TableCell';
 import TableHead from '@mui/material/TableHead';
 import TableRow from '@mui/material/TableRow';
 import Typography from '@mui/material/Typography';
-import { api, post } from '../api';
+import { api, fmtTime, post } from '../api';
+
+/** estimated_monthly is JSON in a TEXT column - parse defensively: one
+ * corrupted legacy row must never throw in render (white-screen). */
+function est(o: OrderRow): { amount: string; currency: string; partial?: boolean } | null {
+  try { return JSON.parse(o.estimated_monthly); } catch { return null; }
+}
 import { PageHeader } from '../components/PageHeader';
 import { EmptyState } from '../components/EmptyState';
 import { Toast } from '../components/Toast';
@@ -23,6 +29,7 @@ import { usePageTitle } from '../usePageTitle';
 import type { ToastMsg } from '../components/Toast';
 import type { OrderRow } from '../types';
 
+const PAST: Record<string, string> = { confirm: 'confirmed', cancel: 'cancelled', execute: 'executed' };
 const STATUS_COLOR: Record<string, 'success' | 'error' | 'warning' | undefined> = {
   provisioned: 'success', failed: 'error', executing: 'warning',
 };
@@ -44,7 +51,7 @@ export function OrdersView() {
       await post(`/api/orders/${id}/${verb}`);
       qc.invalidateQueries({ queryKey: ['orders'] });
       qc.invalidateQueries({ queryKey: ['overview'] });
-      setToast({ message: `Order ${verb}ed`, severity: 'success' });
+      setToast({ message: `Order ${PAST[verb] ?? verb + 'ed'}`, severity: 'success' });
     } catch (e) {
       setToast({ message: (e as Error).message, severity: 'error' });
     }
@@ -86,8 +93,8 @@ export function OrdersView() {
                     <TableCell><Chip size="small" variant="outlined" label={o.adapter} /></TableCell>
                     <TableCell>{o.location}</TableCell>
                     <TableCell align="right" className="num">
-                      {(() => { const e = JSON.parse(o.estimated_monthly);
-                        return `${e.currency} ${e.amount}${e.partial ? '+' : ''}`; })()}
+                      {(() => { const e = est(o);
+                        return e ? `${e.currency} ${e.amount}${e.partial ? '+' : ''}` : '—'; })()}
                     </TableCell>
                     <TableCell>
                       <Stack direction="row" spacing={0.5} sx={{ alignItems: 'center' }}>
@@ -100,7 +107,7 @@ export function OrdersView() {
                       </Stack>
                     </TableCell>
                     <TableCell>{o.username}</TableCell>
-                    <TableCell className="num">{o.created_at.slice(0, 16).replace('T', ' ')}</TableCell>
+                    <TableCell className="num">{fmtTime(o.created_at)}</TableCell>
                     {isAdmin && (
                       <TableCell align="right" onClick={e => e.stopPropagation()}>
                         <Stack direction="row" spacing={1} sx={{ justifyContent: 'flex-end' }}>
@@ -144,7 +151,7 @@ function OrderDetailDialog({ orderId, onClose }: { orderId: number; onClose: () 
   if (o.isError) return <Dialog open onClose={onClose}><DialogContent>
     <Alert severity="error">{(o.error as Error).message}</Alert></DialogContent></Dialog>;
   const d = o.data!;
-  const est = JSON.parse(d.estimated_monthly);
+  const e_ = est(d);
   return (
     <Dialog open onClose={onClose} maxWidth="xs" fullWidth>
       <DialogTitle>Order #{d.id} · {d.plan_name}</DialogTitle>
@@ -156,8 +163,8 @@ function OrderDetailDialog({ orderId, onClose }: { orderId: number; onClose: () 
             <Chip size="small" variant="outlined" label={d.adapter} />
           </Stack>
           <Typography variant="body2" sx={{ color: 'text.secondary' }}>
-            {d.location} · estimated {est.currency} {est.amount}/mo
-            {est.partial && ' (partial - IP price not published)'}
+            {d.location} · estimated {e_ ? `${e_.currency} ${e_.amount}/mo` : '—'}
+            {e_?.partial && ' (partial - IP price not published)'}
           </Typography>
           {d.resulting_provider_id && (
             <Typography variant="body2" className="num">
@@ -171,7 +178,7 @@ function OrderDetailDialog({ orderId, onClose }: { orderId: number; onClose: () 
                 <Stack key={i} direction="row" spacing={1.5}
                        sx={{ alignItems: 'baseline' }}>
                   <Typography className="num" variant="caption" sx={{ color: 'text.secondary', width: 64 }}>
-                    {e.created_at.slice(11, 16)}
+                    {fmtTime(e.created_at)}
                   </Typography>
                   <Chip size="small" variant="outlined" label={e.status}
                         color={STATUS_COLOR[e.status]} />

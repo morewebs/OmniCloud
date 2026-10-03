@@ -291,7 +291,7 @@ export function CreateFirewallDialog({ open, serverName, onCreate, onClose, busy
         <Button onClick={onClose}>Cancel</Button>
         <Button size="small" variant="contained" onClick={() => onCreate(name, rules)}
                 disabled={busy || !hasInbound || !portsValid || !cidrsValid || !name.trim()}>
-          {busy ? 'Working…' : 'Create and attach'}
+          {busy ? 'Creating…' : 'Create and attach'}
         </Button>
         {!hasInbound && (
           <Typography variant="caption" sx={{ color: 'text.secondary', alignSelf: 'center', mr: 1 }}>

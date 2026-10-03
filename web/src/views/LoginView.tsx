@@ -79,7 +79,7 @@ export function LoginView({ needsSetup }: { needsSetup: boolean }) {
                      autoComplete="current-password" size="small" />
           {error && <Alert severity="error">{error}</Alert>}
           <Button type="submit" variant="contained" disabled={busy} size="large">
-            {busy ? 'Working…' : needsSetup ? 'Create admin account' : 'Sign in'}
+            {busy ? 'Signing in…' : needsSetup ? 'Create admin account' : 'Sign in'}
           </Button>
         </Stack>
       </Box>

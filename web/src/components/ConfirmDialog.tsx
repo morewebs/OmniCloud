@@ -33,6 +33,9 @@ export function ConfirmDialog({
   const [typed, setTyped] = useState('');
   const ready = !requireTyped || typed.trim() === serverName;
   const mismatch = requireTyped && typed.trim().length > 0 && !ready;
+  const busyLabel = { 'Shut down': 'Shutting down…', Reboot: 'Rebooting…', Rebuild: 'Rebuilding…',
+                      Delete: 'Deleting…', Remove: 'Removing…' }[confirmLabel ?? 'Confirm']
+                    ?? `${confirmLabel ?? 'Confirm'}ing…`;
   return (
     <Dialog open={open} onClose={confirming ? undefined : onClose} maxWidth="xs" fullWidth>
       <DialogTitle>{title}</DialogTitle>
@@ -63,7 +66,7 @@ export function ConfirmDialog({
           variant="contained"
           disabled={!ready || confirming}
         >
-          {confirming ? 'Working…' : (confirmLabel ?? 'Confirm')}
+          {confirming ? busyLabel : (confirmLabel ?? 'Confirm')}
         </Button>
       </DialogActions>
     </Dialog>

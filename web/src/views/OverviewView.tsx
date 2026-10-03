@@ -77,7 +77,8 @@ export function OverviewView() {
           sentence, overage carries the one decision the operator may owe. */}
       <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} useFlexGap sx={{ gap: 2 }}>
         <StatTile label="Traffic today" value={fmtBytes(trafficNow)}
-                  delta={delta} sub="out, summed across synced servers" dominant />
+                  delta={delta} sub="out, summed across synced servers"
+                  dominant /* rising traffic = overage risk, not good: no deltaGood */ />
         <Stack spacing={2} sx={{ flex: 1, minWidth: 0 }}>
           <StatTile label="Fleet" value={String(d.fleet.total)} unit="servers"
                     sub={fleetSentence(d.fleet.by_status)} />

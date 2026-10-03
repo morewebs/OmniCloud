@@ -4,6 +4,9 @@ import Alert from '@mui/material/Alert';
 import Box from '@mui/material/Box';
 import Stack from '@mui/material/Stack';
 import Tooltip from '@mui/material/Tooltip';
+import Button from '@mui/material/Button';
+import Skeleton from '@mui/material/Skeleton';
+import { PageHeader } from '../components/PageHeader';
 import Table from '@mui/material/Table';
 import TableBody from '@mui/material/TableBody';
 import TableCell from '@mui/material/TableCell';
@@ -44,16 +47,28 @@ export function AllowancesView() {
   const [rowsPerPage, setRowsPerPage] = useState(25);
 
   if (allowances.isPending || billing.isPending || fleet.isPending) {
-    return <Typography sx={{ color: 'text.secondary' }}>Loading…</Typography>;
+    return <Stack spacing={1.5}>
+      <Skeleton variant="rounded" height={32} sx={{ maxWidth: 180 }} />
+      {Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} variant="rounded" height={44} />)}
+    </Stack>;
   }
-  if (allowances.isError) return <Alert severity="error">{(allowances.error as Error).message}</Alert>;
+  if (allowances.isError) return (
+    <Stack spacing={2}>
+      <PageHeader title="Billing" />
+      <Alert severity="error"
+             action={<Button onClick={() => allowances.refetch()}>Retry</Button>}>
+        {(allowances.error as Error).message}
+      </Alert>
+    </Stack>
+  );
 
   const rows = allowances.data ?? [];
   const totalOverage = (billing.data ?? []).reduce((a, b) => a + b.projected_overage_eur, 0);
 
   return (
     <Stack spacing={3}>
-      <Typography variant="h5">Allowances & billing</Typography>
+      <PageHeader title="Billing"
+        subtitle="Traffic allowances and overage exposure — every number adapter-reported." />
 
       <Box>
         <Typography variant="subtitle1" gutterBottom>Billing exposure</Typography>

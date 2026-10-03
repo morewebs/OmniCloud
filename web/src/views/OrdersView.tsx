@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import Alert from '@mui/material/Alert';
 import Box from '@mui/material/Box';
@@ -27,6 +28,7 @@ const STATUS_COLOR: Record<string, 'success' | 'error' | 'warning' | undefined> 
 
 export function OrdersView() {
   const qc = useQueryClient();
+  const navigate = useNavigate();
   const orders = useQuery<OrderRow[]>({ queryKey: ['orders'],
     queryFn: () => api<OrderRow[]>('/api/orders') });
   const me = useQuery({ queryKey: ['me'],
@@ -56,7 +58,7 @@ export function OrdersView() {
 
       {orders.data!.length === 0
         ? <EmptyState mark="⌘" line="No orders yet. Browse the catalog to place one."
-                      actionLabel="Open catalog" onAction={() => location.hash = '#/catalog'} />
+                      actionLabel="Open catalog" onAction={() => navigate('/catalog')} />
         : (
           <Box sx={{ overflowX: 'auto' }}>
             <Table size="small">

@@ -48,6 +48,16 @@ import type { FleetResponse } from './types';
 
 const DRAWER_W = 240;
 
+// Active nav: tinted brand surface + brand icon + weight, not a whisper.
+const navSx = {
+  mb: 0.25,
+  '&.active': {
+    bgcolor: 'rgba(94, 106, 210, 0.10)',
+    '& .MuiListItemIcon-root': { color: 'primary.main' },
+    '& .MuiListItemText-primary': { fontWeight: 600, color: 'primary.main' },
+  },
+};
+
 function Shell({ user, themeMode, onToggleTheme }: {
   user: { id: number; username: string; role: string };
   themeMode: 'light' | 'dark';
@@ -105,7 +115,7 @@ function Shell({ user, themeMode, onToggleTheme }: {
       {NAV.map(n => (
         <ListItemButton key={n.to} component={NavLink} to={n.to}
                         onClick={() => setDrawerOpen(false)}
-                        sx={{ '&.active': { bgcolor: 'action.selected' }, mb: 0.25 }}>
+                        sx={navSx}>
           <ListItemIcon sx={{ minWidth: 40 }}>{n.icon}</ListItemIcon>
           <ListItemText primary={n.label} slotProps={{ primary: { sx: { fontSize: 14 } } }} />
         </ListItemButton>
@@ -116,7 +126,7 @@ function Shell({ user, themeMode, onToggleTheme }: {
           {ADMIN_NAV.map(n => (
             <ListItemButton key={n.to} component={NavLink} to={n.to}
                             onClick={() => setDrawerOpen(false)}
-                            sx={{ '&.active': { bgcolor: 'action.selected' }, mb: 0.25 }}>
+                            sx={navSx}>
               <ListItemIcon sx={{ minWidth: 40 }}>{n.icon}</ListItemIcon>
               <ListItemText primary={n.label} slotProps={{ primary: { sx: { fontSize: 14 } } }} />
             </ListItemButton>
@@ -137,8 +147,8 @@ function Shell({ user, themeMode, onToggleTheme }: {
               <MenuIcon fontSize="small" />
             </IconButton>
           )}
-          <Typography variant="h6" sx={{ mr: 2, letterSpacing: '-0.01em' }}>
-            Omni<span style={{ color: (theme.palette.primary as { main: string }).main }}>Cloud</span>
+          <Typography variant="h6" sx={{ mr: 2, letterSpacing: '-0.02em', fontWeight: 600 }}>
+            OmniCloud
           </Typography>
           <Box sx={{ flex: 1 }} />
           <Button size="small" startIcon={<SearchIcon />} onClick={() => setPaletteOpen(true)}

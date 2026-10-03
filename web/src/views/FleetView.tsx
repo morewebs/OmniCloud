@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import Alert from '@mui/material/Alert';
 import Box from '@mui/material/Box';
@@ -33,10 +34,12 @@ import { Sparkline } from '../components/Sparkline';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { FirewallDialog, AttachFirewallDialog, CreateFirewallDialog, toHetznerRules } from '../components/FirewallDialog';
 import { PageHeader } from '../components/PageHeader';
+import { StatTile } from '../components/StatTile';
 
 
 export function FleetView() {
   const qc = useQueryClient();
+  const navigate = useNavigate();
   const fleet = useQuery<FleetResponse>({ queryKey: ['fleet'],
     queryFn: () => api<FleetResponse>('/api/fleet') });
   const adapters = useQuery<AdapterInfo[]>({ queryKey: ['adapters'],
@@ -90,7 +93,7 @@ export function FleetView() {
         <Typography variant="body2" sx={{ color: 'text.secondary' }}>
           Connect a provider account to import its fleet.
         </Typography>
-        <Button variant="contained" href="#/credentials">Connect a provider account</Button>
+        <Button variant="contained" onClick={() => navigate('/credentials')}>Connect a provider account</Button>
       </Stack>
     );
   }
@@ -101,6 +104,16 @@ export function FleetView() {
         title="Fleet"
         subtitle={`${summary.total} servers · ${summary.running} running · ${summary.notReporting} unknown · ${fmtBytes(summary.traffic)} this month · projected overage €${summary.overage.toFixed(2)}`}
       />
+
+      <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} useFlexGap sx={{ gap: 2 }}>
+        <StatTile label="Fleet" value={String(summary.total)} unit="servers"
+                  sub={`${summary.running} running · ${summary.notReporting} unknown`} />
+        <StatTile label="Traffic this month" value={fmtBytes(summary.traffic)}
+                  sub="summed across synced servers" dominant />
+        <StatTile label="Projected overage"
+                  value={`€${summary.overage.toFixed(2)}`}
+                  sub="adapter-reported, this month" />
+      </Stack>
 
       {fleet.data.in_progress_actions.length > 0 && (
         <Alert severity="info" icon={false}>
@@ -123,8 +136,8 @@ export function FleetView() {
         ) } }}
       />
 
-      <Box sx={{ overflowX: 'auto' }}>
-        <Table size="small" sx={{ minWidth: 900 }}>
+      <Box sx={{ overflowX: 'auto', maxHeight: 560 }}>
+        <Table size="small" stickyHeader sx={{ minWidth: 900 }}>
           <TableHead>
             <TableRow>
               <TableCell>Status</TableCell>

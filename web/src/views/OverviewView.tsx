@@ -5,14 +5,16 @@ import Card from '@mui/material/Card';
 import CardContent from '@mui/material/CardContent';
 import Chip from '@mui/material/Chip';
 import Stack from '@mui/material/Stack';
+import Tooltip from '@mui/material/Tooltip';
 import Typography from '@mui/material/Typography';
 import { PieChart } from '@mui/x-charts/PieChart';
 import { BarChart } from '@mui/x-charts/BarChart';
 import { LineChart } from '@mui/x-charts/LineChart';
+import { useTheme } from '@mui/material/styles';
 import { api, fmtBytes } from '../api';
 import { PageHeader } from '../components/PageHeader';
 import { StatTile } from '../components/StatTile';
-import { Sparkline } from '../components/Sparkline';
+import { axisSlotProps, SPEND_COLORS, statusColor } from '../components/charts';
 
 interface OverviewPayload {
   fleet: { total: number; by_status: Record<string, number> };
@@ -27,11 +29,12 @@ interface OverviewPayload {
             account_id?: number; error?: string }[];
 }
 
-function fmtCurrency(amount: number, currency: string) {
-  return new Intl.NumberFormat('en', { style: 'currency', currency, maximumFractionDigits: 0 }).format(amount);
-}
+const fmtCurrency = (amount: number, currency: string) =>
+  new Intl.NumberFormat('en', { style: 'currency', currency, maximumFractionDigits: 2 })
+    .format(amount);
 
 export function OverviewView() {
+  const mode = useTheme().palette.mode;
   const ov = useQuery<OverviewPayload>({ queryKey: ['overview'],
     queryFn: () => api<OverviewPayload>('/api/overview') });
 
@@ -45,8 +48,8 @@ export function OverviewView() {
     ? { text: `${trafficNow >= trafficPrev ? '+' : ''}${(((trafficNow - trafficPrev) / trafficPrev) * 100).toFixed(0)}% vs yesterday`, up: trafficNow >= trafficPrev }
     : null;
 
-  const statusData = Object.entries(d.fleet.by_status).map(([label, value], i) => ({
-    id: i, value, label,
+  const statusData = Object.entries(d.fleet.by_status).map(([label, value]) => ({
+    id: label, value, label, color: statusColor(label, mode),
   }));
 
   const spendRows = Object.entries(d.spend).flatMap(([adapter, byCur]) =>
@@ -54,32 +57,63 @@ export function OverviewView() {
   const adapters = [...new Set(spendRows.map(r => r.adapter))];
   const currencies = [...new Set(spendRows.map(r => r.currency))];
   // one series per currency - mixed currencies are never summed
-  const spendSeries = currencies.map(cur => ({
+  const spendSeries = currencies.map((cur, i) => ({
     label: cur,
+    color: SPEND_COLORS[mode][i % SPEND_COLORS[mode].length],
     data: adapters.map(a =>
       spendRows.find(r => r.adapter === a && r.currency === cur)?.amount ?? 0),
   }));
 
   const overageEntries = Object.entries(d.projected_overage);
+  const worst = d.alerts.find(a => (a.pct ?? 0) >= 100) ?? d.alerts[0];
 
   return (
     <Stack spacing={3}>
-      <PageHeader title="Overview" subtitle="Fleet health, spend, and traffic at a glance." />
+      <PageHeader title="Overview" subtitle="Fleet condition, spend, and traffic — every number provider-reported." />
 
-      <Stack direction="row" spacing={2} sx={{ flexWrap: 'wrap', gap: 2 }}>
-        <StatTile label="Fleet" value={String(d.fleet.total)} unit="servers"
-                  sub={`${d.fleet.by_status['running'] ?? 0} running · ${d.fleet.by_status['unknown'] ?? 0} unknown`} />
-        <StatTile label="Traffic today" value={fmtBytes(trafficNow)} delta={delta}
-                  sub="sum of synced servers" dominant />
-        <StatTile label="Projected overage"
-                  value={overageEntries.length
-                    ? overageEntries.map(([c, a]) => fmtCurrency(a, c)).join(' + ')
-                    : '—'}
-                  sub={overageEntries.length ? 'this month, adapter-reported' : 'none projected'} />
-        <StatTile label="Open orders"
-                  value={String(d.recent_orders.length)}
-                  sub="last 5 shown below" />
+      {/* The instrument row: traffic dominates (design.md 5), fleet is a
+          sentence, overage carries the one decision the operator may owe. */}
+      <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} useFlexGap sx={{ gap: 2 }}>
+        <StatTile label="Traffic today" value={fmtBytes(trafficNow)}
+                  delta={delta} sub="out, summed across synced servers" dominant />
+        <Stack spacing={2} sx={{ flex: 1, minWidth: 0 }}>
+          <StatTile label="Fleet" value={String(d.fleet.total)} unit="servers"
+                    sub={fleetSentence(d.fleet.by_status)} />
+          <StatTile label="Projected overage"
+                    value={overageEntries.length
+                      ? overageEntries.map(([c, a]) => fmtCurrency(a, c)).join(' + ')
+                      : '—'}
+                    sub={overageEntries.length ? 'this month, adapter-reported' : 'none projected'} />
+        </Stack>
       </Stack>
+
+      {/* alerts lead the second row: the loudest thing on screen is the one
+          thing that needs a decision */}
+      {d.alerts.length > 0 && worst && (
+        <Alert severity={(worst.pct ?? 0) >= 100 ? 'error' : 'warning'} icon={false}
+               sx={{ alignItems: 'center' }}>
+          <Stack direction="row" spacing={2} sx={{ alignItems: 'center', flexWrap: 'wrap', gap: 1 }}>
+            <Box>
+              {worst.kind === 'allowance'
+                ? <b>{worst.server}</b>
+                : <b>Account {worst.account_id}</b>}
+              <Typography variant="body2" sx={{ color: 'text.secondary' }}>
+                {worst.kind === 'allowance'
+                  ? `at ${worst.pct}% of its traffic allowance`
+                  : worst.error}
+              </Typography>
+            </Box>
+            {d.alerts.length > 1 && (
+              <Tooltip title={d.alerts.map(a => a.kind === 'allowance'
+                ? `${a.server} (${a.adapter}) — ${a.pct}%`
+                : `account ${a.account_id}: ${a.error}`).join('\n')}>
+                <Chip size="small" variant="outlined"
+                      label={`+${d.alerts.length - 1} more`} />
+              </Tooltip>
+            )}
+          </Stack>
+        </Alert>
+      )}
 
       <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} useFlexGap sx={{ gap: 2 }}>
         <Card sx={{ flex: 1, minWidth: 260 }}>
@@ -87,10 +121,10 @@ export function OverviewView() {
             <Typography variant="overline" sx={{ color: 'text.secondary' }}>Fleet status</Typography>
             {statusData.length
               ? <PieChart
-                  height={180}
+                  height={190}
                   series={[{
                     data: statusData,
-                    innerRadius: 30, outerRadius: 70, paddingAngle: 2, cornerRadius: 4,
+                    innerRadius: 34, outerRadius: 72, paddingAngle: 2, cornerRadius: 4,
                   }]}
                   hideLegend
                 />
@@ -98,7 +132,7 @@ export function OverviewView() {
             <Stack direction="row" spacing={1} sx={{ flexWrap: 'wrap', gap: 0.5, mt: 1 }}>
               {statusData.map(s => (
                 <Chip key={s.label} size="small" variant="outlined"
-                      label={`${s.label} ${s.value}`} />
+                      label={`${s.value} ${s.label}`} />
               ))}
             </Stack>
           </CardContent>
@@ -109,9 +143,10 @@ export function OverviewView() {
             <Typography variant="overline" sx={{ color: 'text.secondary' }}>Monthly spend by provider</Typography>
             {spendRows.length
               ? <BarChart
-                  height={180}
+                  height={190}
                   xAxis={[{ data: adapters, scaleType: 'band' }]}
                   series={spendSeries.map(s => ({ ...s, stack: 'total' }))}
+                  slotProps={axisSlotProps}
                   hideLegend={currencies.length < 2}
                 />
               : <Empty text="No spend data yet" />}
@@ -128,45 +163,23 @@ export function OverviewView() {
             <Typography variant="overline" sx={{ color: 'text.secondary' }}>Traffic, last 30 days</Typography>
             {d.traffic_days.length > 1
               ? <LineChart
-                  height={180}
+                  height={190}
                   xAxis={[{
                     data: d.traffic_days.map(x => x.day.slice(5)),
                     scaleType: 'point',
                   }]}
                   series={[{
                     data: d.traffic_days.map(x => x.bytes / 1e9),
-                    label: 'GB/day', showMark: false, curve: 'linear',
+                    color: SPEND_COLORS[mode][0], label: 'GB/day', showMark: false, curve: 'linear',
                   }]}
                   yAxis={[{ label: 'GB' }]}
+                  slotProps={axisSlotProps}
                   hideLegend
                 />
               : <Empty text="Traffic history builds up over the first days" />}
           </CardContent>
         </Card>
       </Stack>
-
-      {d.alerts.length > 0 && (
-        <Card>
-          <CardContent>
-            <Typography variant="overline" sx={{ color: 'text.secondary' }}>Alerts</Typography>
-            <Stack spacing={1} sx={{ mt: 1 }}>
-              {d.alerts.slice(0, 8).map((a, i) => (
-                <Stack key={i} direction="row" spacing={1} sx={{ alignItems: 'center' }}>
-                  <Chip size="small" variant="outlined"
-                        color={a.kind === 'allowance' ? 'warning' : 'error'}
-                        label={a.kind === 'allowance'
-                          ? `${a.pct}% of allowance` : 'sync error'} />
-                  <Typography variant="body2">
-                    {a.kind === 'allowance'
-                      ? `${a.server} (${a.adapter})`
-                      : `account ${a.account_id}: ${a.error}`}
-                  </Typography>
-                </Stack>
-              ))}
-            </Stack>
-          </CardContent>
-        </Card>
-      )}
 
       <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} useFlexGap sx={{ gap: 2 }}>
         <Card sx={{ flex: 1, minWidth: 280 }}>
@@ -216,13 +229,21 @@ export function OverviewView() {
   );
 }
 
+/** "188 of 200 reporting · 11 unknown · 1 off" — count-first sentence. */
+function fleetSentence(byStatus: Record<string, number>): string {
+  const total = Object.values(byStatus).reduce((a, b) => a + b, 0);
+  const running = byStatus['running'] ?? 0;
+  const parts = [`${running} of ${total} reporting`];
+  for (const [k, v] of Object.entries(byStatus)) {
+    if (k !== 'running' && v > 0) parts.push(`${v} ${k}`);
+  }
+  return parts.join(' · ');
+}
+
 function Empty({ text }: { text: string }) {
   return (
-    <Box sx={{ height: 180, display: 'grid', placeItems: 'center' }}>
-      <Stack spacing={1} sx={{ alignItems: 'center' }}>
-        <Sparkline values={[]} />
-        <Typography variant="body2" sx={{ color: 'text.secondary' }}>{text}</Typography>
-      </Stack>
+    <Box sx={{ height: 190, display: 'grid', placeItems: 'center' }}>
+      <Typography variant="body2" sx={{ color: 'text.secondary' }}>{text}</Typography>
     </Box>
   );
 }

@@ -125,8 +125,8 @@ export function CatalogView() {
                       onAction={() => { setAdapterF('all'); setLocF('all'); setMaxPrice('');
                                         setMinTraffic(''); setIpOnly(false); }} />
         : (
-          <Box sx={{ overflowX: 'auto' }}>
-            <Table size="small">
+          <Box sx={{ overflowX: 'auto', maxHeight: 620 }}>
+            <Table size="small" stickyHeader>
               <TableHead>
                 <TableRow>
                   <TableCell padding="checkbox" />

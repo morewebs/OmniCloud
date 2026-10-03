@@ -167,22 +167,22 @@ export function CatalogView() {
                           ? new Intl.NumberFormat('en', { style: 'currency',
                               currency: p.price_monthly.currency, maximumFractionDigits: 2 })
                               .format(Number(p.price_monthly.amount))
-                          : <span style={{ color: 'text.secondary', fontStyle: 'italic' }}>not published</span>}
+                          : <Box component="span" sx={{ color: 'text.secondary', fontStyle: 'italic'  }}>not published</Box>}
                       </TableCell>
                       <TableCell align="right" className="num">
                         {p.included_traffic_bytes != null ? fmtBytes(p.included_traffic_bytes)
                           : p.traffic_note
-                            ? <span style={{ color: 'text.secondary' }}>{p.traffic_note}</span>
-                            : <span style={{ color: 'text.secondary' }}>per account / not published</span>}
+                            ? <Box component="span" sx={{ color: 'text.secondary'  }}>{p.traffic_note}</Box>
+                            : <Box component="span" sx={{ color: 'text.secondary'  }}>per account / not published</Box>}
                       </TableCell>
                       <TableCell>
                         {p.extra_ip
                           ? (p.extra_ip.price
                               ? `+${p.extra_ip.price.currency} ${p.extra_ip.price.amount}/mo each`
                               : <Tooltip title={p.extra_ip.note ?? 'price not published'}>
-                                  <span style={{ color: 'text.secondary' }}>offered · price on request</span>
+                                  <Box component="span" sx={{ color: 'text.secondary'  }}>offered · price on request</Box>
                                 </Tooltip>)
-                          : <span style={{ color: 'text.secondary' }}>—</span>}
+                          : <Box component="span" sx={{ color: 'text.secondary'  }}>—</Box>}
                       </TableCell>
                       <TableCell>{p.billing_model || '—'}</TableCell>
                       <TableCell>

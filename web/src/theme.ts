@@ -68,13 +68,15 @@ const shared = {
           fontFamily: '"Geist Mono", ui-monospace, "Cascadia Mono", Consolas, monospace',
           fontVariantNumeric: 'tabular-nums',
         },
-        '@keyframes omniShimmer': {
-          '0%': { backgroundPosition: '-400px 0' },
-          '100%': { backgroundPosition: '400px 0' },
+        // one global focus ring, visible on every surface in both themes
+        '*:focus-visible': {
+          outline: '2px solid var(--mui-palette-primary-main)',
+          outlineOffset: 2,
         },
         '@media (prefers-reduced-motion: reduce)': {
           '*': {
             animationDuration: '0.01ms !important',
+            animationIterationCount: '1 !important',
             transitionDuration: '0.01ms !important',
           },
         },
@@ -103,11 +105,12 @@ const shared = {
     MuiTooltip: {
       styleOverrides: {
         tooltip: {
-          backgroundColor: '#09090B',
-          color: '#FAFAFA',
+          backgroundColor: 'var(--mui-palette-background-default)',
+          color: 'var(--mui-palette-text-primary)',
           fontSize: '0.75rem',
           borderRadius: 6,
-          border: '1px solid #3F3F46',
+          border: '1px solid var(--mui-palette-divider)',
+          boxShadow: '0 4px 16px rgba(0,0,0,0.16)',
         },
       },
     },

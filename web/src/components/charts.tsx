@@ -8,8 +8,8 @@ import type { ChartsAxisSlotProps } from '@mui/x-charts/ChartsAxis';
 // design.md 2: the status trio, lightened one step for dark paper
 export const STATUS_COLORS: Record<string, Record<'light' | 'dark', string>> = {
   running: { light: '#3F6212', dark: '#A3E635' },
-  off: { light: '#A1A1AA', dark: '#A1A1AA' },
-  unknown: { light: '#A1A1AA', dark: '#A1A1AA' },
+  off: { light: '#71717A', dark: '#A1A1AA' },      // 3:1 on white in light
+  unknown: { light: '#71717A', dark: '#A1A1AA' },
   rebuilding: { light: '#854D0E', dark: '#FBBF24' },
 };
 

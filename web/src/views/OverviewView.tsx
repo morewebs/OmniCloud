@@ -190,7 +190,7 @@ export function OverviewView() {
               {d.recent_actions.map(a => (
                 <Stack key={a.id} direction="row" sx={{ justifyContent: 'space-between', alignItems: 'baseline' }}>
                   <Typography variant="body2" sx={{ fontWeight: 500 }}>
-                    {a.kind} <span style={{ color: 'text.secondary' }}>· {a.username ?? 'system'}</span>
+                    {a.kind} <Box component="span" sx={{ color: 'text.secondary'  }}>· {a.username ?? 'system'}</Box>
                   </Typography>
                   <Stack direction="row" spacing={1} sx={{ alignItems: 'baseline' }}>
                     <Typography variant="caption" sx={{ color: 'text.secondary' }}>
@@ -214,7 +214,7 @@ export function OverviewView() {
               {d.recent_orders.map(o => (
                 <Stack key={o.id} direction="row" sx={{ justifyContent: 'space-between', alignItems: 'baseline' }}>
                   <Typography variant="body2" sx={{ fontWeight: 500 }}>
-                    {o.plan_name} <span style={{ color: 'text.secondary' }}>· {o.adapter}</span>
+                    {o.plan_name} <Box component="span" sx={{ color: 'text.secondary'  }}>· {o.adapter}</Box>
                   </Typography>
                   <Chip size="small" variant="outlined" label={o.status}
                         color={o.status === 'provisioned' ? 'success'

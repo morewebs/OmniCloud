@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import Alert from '@mui/material/Alert';
+import Box from '@mui/material/Box';
 import Chip from '@mui/material/Chip';
 import Stack from '@mui/material/Stack';
 import Table from '@mui/material/Table';
@@ -34,7 +35,8 @@ export function AdaptersView() {
       <PageHeader title="Adapters"
         subtitle="Every provider on the panel — what it can do here, and where its plan data comes from." />
 
-      <Table size="small">
+      <Box sx={{ overflowX: 'auto' }}>
+        <Table size="small">
         <TableHead>
           <TableRow>
             <TableCell>Provider</TableCell>
@@ -76,6 +78,7 @@ export function AdaptersView() {
           })}
         </TableBody>
       </Table>
+      </Box>
 
       <Stack spacing={1} sx={{ maxWidth: 720 }}>
         <Typography variant="body2" sx={{ color: 'text.secondary' }}>

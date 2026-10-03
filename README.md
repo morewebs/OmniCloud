@@ -1,5 +1,8 @@
 # OmniCloud
 
+[![CI](https://github.com/morewebs/OmniCloud/actions/workflows/ci.yml/badge.svg)](../../actions)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 An open-source, multi-provider cloud control panel. OmniCloud aggregates
 server fleets, traffic allowances, billing exposure, and a plan marketplace
 across cloud providers behind one canonical data model.
@@ -70,6 +73,20 @@ ever displayed).
 **Production:** see [DEPLOY.md](DEPLOY.md) — TLS, backups (DB + master key
 together), reverse proxy (SSE unbuffered, ≥960s read timeout for long server
 actions), Docker.
+
+## Built-in updates
+
+Settings → Panel update checks GitHub (daily, automatic) and can apply a
+release in one click: pull → dependencies → SPA build → restart. The restart
+is your supervisor's job (Docker `--restart`, systemd, or a loop script) —
+the panel exits with code **78** after applying; see DEPLOY.md for each
+setup's restart line.
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) — provider facts need citations
+(docs/provider-truth.md), tests never touch real infrastructure, and the
+data-honesty rules in design.md are enforced by the suite. MIT licensed.
 
 ## Tests
 

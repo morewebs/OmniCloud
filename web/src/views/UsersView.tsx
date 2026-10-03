@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import Alert from '@mui/material/Alert';
+import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import Chip from '@mui/material/Chip';
 import Dialog from '@mui/material/Dialog';
@@ -80,7 +81,8 @@ export function UsersView() {
             Add user
           </Button>)} />
 
-      <Table size="small">
+      <Box sx={{ overflowX: 'auto' }}>
+        <Table size="small">
         <TableHead>
           <TableRow>
             <TableCell>Username</TableCell>
@@ -135,6 +137,7 @@ export function UsersView() {
           })}
         </TableBody>
       </Table>
+      </Box>
 
       <ConfirmDialog
         open={!!elevate}

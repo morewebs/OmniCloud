@@ -122,7 +122,7 @@ export function OverviewView() {
 
       {/* The instrument row: traffic dominates (design.md 5), fleet is a
           sentence, overage carries the one decision the operator may owe. */}
-      <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} useFlexGap sx={{ gap: 2 }}>
+      <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} useFlexGap sx={{ gap: 2 }}>
         <StatTile label="Traffic today" value={fmtBytes(trafficNow)}
                   delta={delta} sub="out, summed across synced servers"
                   dominant /* rising traffic = overage risk, not good: no deltaGood */ />
@@ -165,8 +165,8 @@ export function OverviewView() {
         </Alert>
       )}
 
-      <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} useFlexGap sx={{ gap: 2 }}>
-        <Card sx={{ flex: 1, minWidth: 260 }}>
+      <Stack direction={{ xs: 'column', lg: 'row' }} spacing={2} useFlexGap sx={{ gap: 2 }}>
+        <Card sx={{ flex: 1, minWidth: { xs: 0, lg: 260 } }}>
           <CardContent>
             <Typography variant="overline" sx={{ color: 'text.secondary' }}>Fleet status</Typography>
             {statusData.length
@@ -188,7 +188,7 @@ export function OverviewView() {
           </CardContent>
         </Card>
 
-        <Card sx={{ flex: 1.4, minWidth: 300 }}>
+        <Card sx={{ flex: 1.4, minWidth: { xs: 0, lg: 300 }, maxWidth: '100%' }}>
           <CardContent>
             <Typography variant="overline" sx={{ color: 'text.secondary' }}>Monthly spend by provider</Typography>
             {spendRows.length
@@ -208,7 +208,7 @@ export function OverviewView() {
           </CardContent>
         </Card>
 
-        <Card sx={{ flex: 1.6, minWidth: 300 }}>
+        <Card sx={{ flex: 1.6, minWidth: { xs: 0, lg: 300 }, maxWidth: '100%' }}>
           <CardContent>
             <Typography variant="overline" sx={{ color: 'text.secondary' }}>Traffic, last 30 days</Typography>
             {d.traffic_days.length > 1
@@ -231,8 +231,8 @@ export function OverviewView() {
         </Card>
       </Stack>
 
-      <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} useFlexGap sx={{ gap: 2 }}>
-        <Card sx={{ flex: 1, minWidth: 280 }}>
+      <Stack direction={{ xs: 'column', lg: 'row' }} spacing={2} useFlexGap sx={{ gap: 2 }}>
+        <Card sx={{ flex: 1, minWidth: { xs: 0, lg: 280 }, maxWidth: '100%' }}>
           <CardContent>
             <Typography variant="overline" sx={{ color: 'text.secondary' }}>Recent actions</Typography>
             <Stack spacing={1.5} sx={{ mt: 1 }}>
@@ -256,7 +256,7 @@ export function OverviewView() {
           </CardContent>
         </Card>
 
-        <Card sx={{ flex: 1, minWidth: 280 }}>
+        <Card sx={{ flex: 1, minWidth: { xs: 0, lg: 280 }, maxWidth: '100%' }}>
           <CardContent>
             <Typography variant="overline" sx={{ color: 'text.secondary' }}>Recent orders</Typography>
             <Stack spacing={1.5} sx={{ mt: 1 }}>

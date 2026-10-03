@@ -74,8 +74,9 @@ async def apply() -> dict:
     pre-flight failure; a successful apply ends the process."""
     if _status["applying"]:
         raise RuntimeError("an update is already in progress")
-    if subprocess.run(["git", "rev-parse", "--is-inside-work-tree"], cwd=REPO_ROOT,
-                      capture_output=True).returncode != 0:
+    if not REPO_ROOT.is_dir() or subprocess.run(
+            ["git", "rev-parse", "--is-inside-work-tree"], cwd=REPO_ROOT,
+            capture_output=True).returncode != 0:
         raise RuntimeError("this install is not a git checkout - "
                            "update manually (see DEPLOY.md)")
     # a dirty tree would conflict with the pull

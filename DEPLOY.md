@@ -67,6 +67,18 @@ safe as a load-balancer / watchdog probe.
 
 ## Updating
 
+**Built-in (preferred):** Settings → Panel update. It checks GitHub daily
+and one click runs: `git pull` → `uv sync` → `npm install && npm run build` →
+the process **exits with code 78**. Your supervisor restarts it on the new
+code. Configure the restart:
+
+- Docker: `docker run --restart unless-stopped ...` (already sufficient)
+- systemd: `Restart=always` (or `RestartForceExitStatus=78` if you restrict restarts)
+- loop script: `until ! uv run uvicorn server.main:app; [ $? -ne 78 ]; do :; done`
+  — or simply restart on any exit; 78 is just the documented handshake.
+
+**Manual** (non-git installs, no node on the box):
+
 ```bash
 git pull
 uv sync

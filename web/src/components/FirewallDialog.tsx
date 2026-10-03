@@ -52,13 +52,25 @@ export function FirewallDialog({ open, serverName, attachedFirewalls, onDetach, 
   error?: string | null;
 }) {
   const [search, setSearch] = useState('');
+  const [confirmId, setConfirmId] = useState<number | null>(null);
+  const [busy, setBusy] = useState(false);
 
   const filtered = useMemo(
     () => attachedFirewalls.filter(f => !search || f.name.toLowerCase().includes(search)),
     [attachedFirewalls, search]);
 
+  const detach = async (id: number) => {
+    setBusy(true);
+    try {
+      await onDetach(id);
+      setConfirmId(null);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
-    <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
+    <Dialog open={open} onClose={busy ? undefined : onClose} maxWidth="sm" fullWidth>
       <DialogTitle>Firewall - {serverName}</DialogTitle>
       <DialogContent dividers>
         <Stack spacing={2}>
@@ -72,6 +84,7 @@ export function FirewallDialog({ open, serverName, attachedFirewalls, onDetach, 
 
           <TextField
             size="small" placeholder="Search attached firewalls"
+            aria-label="Search attached firewalls"
             value={search} onChange={e => setSearch(e.target.value)}
             slotProps={{ input: { startAdornment: (
               <InputAdornment position="start"><SearchIcon fontSize="small" /></InputAdornment>
@@ -83,7 +96,7 @@ export function FirewallDialog({ open, serverName, attachedFirewalls, onDetach, 
               Attached ({filtered.length})
             </Typography>
             <List dense disablePadding sx={{ maxHeight: 300, overflowY: 'auto' }}>
-              {filtered.length === 0 && !loading && (
+              {filtered.length === 0 && !loading && !error && (
                 <Typography variant="body2" sx={{ color: 'text.secondary', px: 2, py: 1 }}>
                   {search ? 'No attached firewalls match the search.'
                     : 'No firewalls attached. This server accepts all traffic.'}
@@ -92,12 +105,27 @@ export function FirewallDialog({ open, serverName, attachedFirewalls, onDetach, 
               {filtered.map(f => (
                 <ListItem key={f.id} disableGutters
                   secondaryAction={
-                    <Button size="small" color="error" onClick={() => onDetach(f.id)}>
-                      Detach
-                    </Button>
+                    confirmId === f.id ? (
+                      <Stack direction="row" spacing={0.5}>
+                        <Button size="small" color="error" variant="contained"
+                                disabled={busy}
+                                onClick={() => detach(f.id)}>
+                          {busy ? 'Detaching…' : `Confirm — remove ${f.name}`}
+                        </Button>
+                        <Button size="small" disabled={busy}
+                                onClick={() => setConfirmId(null)}>Keep</Button>
+                      </Stack>
+                    ) : (
+                      <Button size="small" color="error" disabled={busy}
+                              onClick={() => setConfirmId(f.id)}>
+                        Detach
+                      </Button>
+                    )
                   }>
                   <ListItemText
                     primary={f.name}
+                    secondary={confirmId === f.id
+                      ? 'This opens the server to all traffic' : undefined}
                     slotProps={{ primary: { sx: { fontSize: 14, fontWeight: 500 } } }}
                   />
                 </ListItem>
@@ -105,11 +133,11 @@ export function FirewallDialog({ open, serverName, attachedFirewalls, onDetach, 
             </List>
           </Box>
 
-          <Button onClick={onShowCreate}>Create a new firewall…</Button>
+          <Button onClick={onShowCreate} disabled={busy}>Create a new firewall…</Button>
         </Stack>
       </DialogContent>
       <DialogActions>
-        <Button onClick={onClose}>Close</Button>
+        <Button onClick={onClose} disabled={busy}>Close</Button>
       </DialogActions>
     </Dialog>
   );
@@ -145,6 +173,7 @@ export function AttachFirewallDialog({ open, serverName, firewalls, excludeIds, 
           {error && <Alert severity="error">{error}</Alert>}
           <TextField
             size="small" placeholder="Search firewalls" fullWidth autoFocus
+            aria-label="Search firewalls"
             value={search} onChange={e => setSearch(e.target.value)}
             slotProps={{ input: { startAdornment: (
               <InputAdornment position="start"><SearchIcon fontSize="small" /></InputAdornment>
@@ -183,14 +212,18 @@ export function AttachFirewallDialog({ open, serverName, firewalls, excludeIds, 
 /** Create-new path: for a fresh server without any firewall. Kept minimal
  * (a handful of allow rules); bulk rule management belongs to the provider
  * console when a firewall already carries 100+ rules. */
+const PORT_RE = /^$|^(\d{1,5}(-\d{1,5})?)(,(\d{1,5}(-\d{1,5})?))*$/;
+const CIDR_RE = /^$|^\d{1,3}(\.\d{1,3}){3}(\/\d{1,2})?$/;
+
 export function CreateFirewallDialog({ open, serverName, onCreate, onClose, busy, error }: {
   open: boolean;
   serverName: string;
-  onCreate: (rules: FwRule[]) => Promise<void> | void;
+  onCreate: (name: string, rules: FwRule[]) => Promise<void> | void;
   onClose: () => void;
   busy?: boolean;
   error?: string | null;
 }) {
+  const [name, setName] = useState(`${serverName}-fw`);
   const [rules, setRules] = useState<FwRule[]>([
     { direction: 'in', protocol: 'tcp', port: '22', source_ips: '' },
   ]);
@@ -199,12 +232,17 @@ export function CreateFirewallDialog({ open, serverName, onCreate, onClose, busy
     setRules(rs => rs.map((r, j) => (j === i ? { ...r, ...patch } : r)));
 
   const hasInbound = rules.some(r => r.direction === 'in');
+  const portsValid = rules.every(r => PORT_RE.test(r.port));
+  const cidrsValid = rules.every(r =>
+    r.source_ips.split(',').map(s => s.trim()).every(c => CIDR_RE.test(c)));
 
   return (
     <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
       <DialogTitle>Create firewall for {serverName}</DialogTitle>
       <DialogContent dividers>
         <Stack spacing={2}>
+          <TextField size="small" label="Firewall name" value={name}
+                     onChange={e => setName(e.target.value)} sx={{ maxWidth: 280 }} />
           <Alert severity="warning">
             Hetzner firewalls are stateful allow-lists: a firewall with no
             inbound allow rule drops all inbound traffic (outbound stays
@@ -227,10 +265,15 @@ export function CreateFirewallDialog({ open, serverName, onCreate, onClose, busy
                 <MenuItem value="icmp">icmp</MenuItem>
               </TextField>
               <TextField label="Port" value={r.port} onChange={e => set(i, { port: e.target.value })}
-                         sx={{ width: 130 }} size="small" placeholder="any" />
+                         sx={{ width: 130 }} size="small" placeholder="any"
+                         disabled={r.protocol === 'icmp'}
+                         error={!portsValid}
+                         helperText={!portsValid ? 'e.g. 22 or 80,443 or 60000-61000' : undefined} />
               <TextField label="Source IPs" value={r.source_ips}
                          onChange={e => set(i, { source_ips: e.target.value })}
-                         sx={{ width: 200 }} size="small" placeholder="any, or CIDRs" />
+                         sx={{ width: 220 }} size="small" placeholder="any, or CIDRs"
+                         error={!cidrsValid}
+                         helperText={!cidrsValid ? 'e.g. 203.0.113.7 or 203.0.113.0/24' : undefined} />
               <Button size="small" onClick={() => setRules(rs => rs.filter((_, j) => j !== i))}>
                 Remove
               </Button>
@@ -246,10 +289,15 @@ export function CreateFirewallDialog({ open, serverName, onCreate, onClose, busy
       </DialogContent>
       <DialogActions>
         <Button onClick={onClose}>Cancel</Button>
-        <Button size="small" variant="contained" onClick={() => onCreate(rules)}
-                disabled={busy || !hasInbound}>
+        <Button size="small" variant="contained" onClick={() => onCreate(name, rules)}
+                disabled={busy || !hasInbound || !portsValid || !cidrsValid || !name.trim()}>
           {busy ? 'Working…' : 'Create and attach'}
         </Button>
+        {!hasInbound && (
+          <Typography variant="caption" sx={{ color: 'text.secondary', alignSelf: 'center', mr: 1 }}>
+            add at least one inbound rule — no inbound rule makes the server unreachable
+          </Typography>
+        )}
       </DialogActions>
     </Dialog>
   );

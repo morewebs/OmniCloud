@@ -581,11 +581,11 @@ function ServerDialog({ server, isAdmin, capabilities, onClose, onDone }: {
         serverName={server.name}
         busy={busy}
         error={error}
-        onCreate={async (rules) => {
+        onCreate={async (name, rules) => {
           setBusy(true); setError(null);
           try {
             await post(`/api/servers/${server.account_id}/${server.provider_id}/firewall`,
-              { rules: toHetznerRules(rules), attach: true });
+              { name: name.trim(), rules: toHetznerRules(rules), attach: true });
             setFwCreateOpen(false);
             onDone();
           } catch (e) {

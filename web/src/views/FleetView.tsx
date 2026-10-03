@@ -36,10 +36,12 @@ import { Sparkline } from '../components/Sparkline';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { FirewallDialog, AttachFirewallDialog, CreateFirewallDialog, toHetznerRules } from '../components/FirewallDialog';
 import { PageHeader } from '../components/PageHeader';
+import { usePageTitle } from '../usePageTitle';
 import { StatTile } from '../components/StatTile';
 
 
 export function FleetView() {
+  usePageTitle('Fleet');
   const qc = useQueryClient();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();

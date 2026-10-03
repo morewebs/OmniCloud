@@ -13,9 +13,11 @@ import { api } from '../api';
 import type { AccountRow, AdapterInfo } from '../types';
 import { CAPABILITY_LABELS } from '../types';
 import { PageHeader } from '../components/PageHeader';
+import { usePageTitle } from '../usePageTitle';
 
 /** All 7 providers: fleet adapters + catalog providers in one registry view. */
 export function AdaptersView() {
+  usePageTitle('Adapters');
   const adapters = useQuery<AdapterInfo[]>({ queryKey: ['adapters'],
     queryFn: () => api<AdapterInfo[]>('/api/adapters') });
   const accounts = useQuery<AccountRow[]>({ queryKey: ['accounts'],

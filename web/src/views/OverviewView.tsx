@@ -13,6 +13,7 @@ import { LineChart } from '@mui/x-charts/LineChart';
 import { useTheme } from '@mui/material/styles';
 import { api, fmtBytes } from '../api';
 import { PageHeader } from '../components/PageHeader';
+import { usePageTitle } from '../usePageTitle';
 import { StatTile } from '../components/StatTile';
 import { axisSlotProps, SPEND_COLORS, statusColor } from '../components/charts';
 
@@ -34,6 +35,7 @@ const fmtCurrency = (amount: number, currency: string) =>
     .format(amount);
 
 export function OverviewView() {
+  usePageTitle('Overview');
   const mode = useTheme().palette.mode;
   const ov = useQuery<OverviewPayload>({ queryKey: ['overview'],
     queryFn: () => api<OverviewPayload>('/api/overview') });

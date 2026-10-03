@@ -19,6 +19,7 @@ import { api, post } from '../api';
 import { PageHeader } from '../components/PageHeader';
 import { EmptyState } from '../components/EmptyState';
 import { Toast } from '../components/Toast';
+import { usePageTitle } from '../usePageTitle';
 import type { ToastMsg } from '../components/Toast';
 import type { OrderRow } from '../types';
 
@@ -27,6 +28,7 @@ const STATUS_COLOR: Record<string, 'success' | 'error' | 'warning' | undefined> 
 };
 
 export function OrdersView() {
+  usePageTitle('Orders');
   const qc = useQueryClient();
   const navigate = useNavigate();
   const orders = useQuery<OrderRow[]>({ queryKey: ['orders'],

@@ -12,6 +12,7 @@ import TablePagination from '@mui/material/TablePagination';
 import TableRow from '@mui/material/TableRow';
 import Typography from '@mui/material/Typography';
 import { api, fmtTime } from '../api';
+import { usePageTitle } from '../usePageTitle';
 import type { Allowance, FleetResponse } from '../types';
 import { AllowanceMeter } from '../components/AllowanceMeter';
 import { Value } from '../components/Value';
@@ -31,6 +32,7 @@ const COUNTING_TEXT: Record<string, string> = {
 };
 
 export function AllowancesView() {
+  usePageTitle('Billing');
   const fleet = useQuery<FleetResponse>({ queryKey: ['fleet'],
     queryFn: () => api<FleetResponse>('/api/fleet') });
   const billing = useQuery<{ adapter: string; monthly_base_eur: number;

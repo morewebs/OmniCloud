@@ -18,6 +18,8 @@ import type { Plan } from '../types';
  * (auditable, clearly-labeled placeholder execution) - the mode column makes
  * real execution a later flip, and the UI says prototype in plain text.
  */
+const HOSTNAME_RE = /^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?$/;
+
 export function OrderDialog({ plan, onClose, onDone }: {
   plan: Plan & { source?: string };
   onClose: () => void;
@@ -27,6 +29,7 @@ export function OrderDialog({ plan, onClose, onDone }: {
   const [extraIps, setExtraIps] = useState(0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [imgFilter, setImgFilter] = useState('');
 
   const images = useQuery<{ id: string; name: string; os: string; version: string | null }[]>({
     queryKey: ['catalog-images', plan.adapter],
@@ -44,6 +47,8 @@ export function OrderDialog({ plan, onClose, onDone }: {
              partial: ipPrice == null && extraIps > 0 };
   }, [plan, extraIps]);
 
+  const hostnameBad = hostname.length > 0 && !HOSTNAME_RE.test(hostname);
+
   const submit = async () => {
     setBusy(true); setError(null);
     try {
@@ -60,8 +65,12 @@ export function OrderDialog({ plan, onClose, onDone }: {
     }
   };
 
+  const imgList = (images.data ?? [])
+    .filter(i => !imgFilter
+      || `${i.name} ${i.version ?? ''} ${i.os}`.toLowerCase().includes(imgFilter.toLowerCase()));
+
   return (
-    <Dialog open onClose={onClose} maxWidth="xs" fullWidth>
+    <Dialog open onClose={onClose} maxWidth="sm" fullWidth>
       <DialogTitle>Order {plan.name}</DialogTitle>
       <DialogContent>
         <Stack spacing={2} sx={{ pt: 1 }}>
@@ -77,20 +86,49 @@ export function OrderDialog({ plan, onClose, onDone }: {
           )}
           <TextField label="Hostname" value={hostname} size="small"
                      onChange={e => setHostname(e.target.value)}
+                     error={hostnameBad}
+                     helperText={hostnameBad
+                       ? 'letters, digits and hyphens; cannot start or end with a hyphen'
+                       : 'optional — the provider assigns one if left empty'}
                      placeholder="e.g. srv-new-01" />
-          {images.data && images.data.length > 0 && (
-            <TextField select label="Image" value={image} size="small"
-                       onChange={e => setImage(e.target.value)}>
-              {images.data.slice(0, 30).map(img => (
-                <MenuItem key={img.id} value={img.id}>
-                  {img.name} {img.version ? `(${img.version})` : ''}
-                </MenuItem>
-              ))}
-            </TextField>
+          {plan.source === 'live' && (
+            images.isPending ? (
+              <TextField select disabled label="Image" value="" size="small"
+                         helperText="Loading images…">
+                <MenuItem value="">Loading images…</MenuItem>
+              </TextField>
+            ) : images.isError ? (
+              <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
+                <Typography variant="body2" sx={{ color: 'text.secondary' }}>
+                  Images unavailable — the provider's default will be used.
+                </Typography>
+                <Button size="small" onClick={() => images.refetch()}>Retry</Button>
+              </Stack>
+            ) : (images.data?.length ?? 0) > 0 && (
+              <Stack spacing={0.5}>
+                {(images.data?.length ?? 0) > 12 && (
+                  <TextField size="small" label="Filter images" value={imgFilter}
+                             onChange={e => setImgFilter(e.target.value)}
+                             sx={{ maxWidth: 260 }} />
+                )}
+                <TextField select label="Image" value={image} size="small"
+                           onChange={e => setImage(e.target.value)}
+                           helperText={image ? undefined : 'the provider\'s default image is used if unset'}>
+                  {imgList.map(img => (
+                    <MenuItem key={img.id} value={img.id}>
+                      {img.name} {img.version ? `(${img.version})` : ''} — {img.os}
+                    </MenuItem>
+                  ))}
+                </TextField>
+              </Stack>
+            )
           )}
           {plan.extra_ip && (
             <TextField select label="Extra IPs" value={String(extraIps)} size="small"
-                       onChange={e => setExtraIps(Number(e.target.value))}>
+                       onChange={e => setExtraIps(Number(e.target.value))}
+                       helperText={plan.extra_ip.price
+                         ? undefined
+                         : `IP price not published — the estimate stays partial`}>
               {Array.from({ length: Math.min(plan.extra_ip.limit ?? 4, 5) + 1 },
                 (_, i) => <MenuItem key={i} value={i} className="num">{i}</MenuItem>)}
             </TextField>
@@ -98,24 +136,26 @@ export function OrderDialog({ plan, onClose, onDone }: {
           {estimate && (
             <Stack direction="row" sx={{ justifyContent: 'space-between' }}>
               <Typography variant="body2" sx={{ color: 'text.secondary' }}>Estimated monthly</Typography>
-              <Typography className="num" variant="body2" sx={{ fontWeight: 600 }}>
-                {new Intl.NumberFormat('en', { style: 'currency', currency: estimate.currency })
-                  .format(estimate.total)}
+              <Stack sx={{ textAlign: 'right' }}>
+                <Typography className="num" variant="body2" sx={{ fontWeight: 600 }}>
+                  {new Intl.NumberFormat('en', { style: 'currency', currency: estimate.currency })
+                    .format(estimate.total)}
+                </Typography>
                 {estimate.partial && (
-                  <Typography variant="caption" sx={{ color: 'warning.main', display: 'block' }}>
+                  <Typography variant="caption" sx={{ color: 'warning.main' }}>
                     + IP prices not published by this provider
                   </Typography>
                 )}
-              </Typography>
+              </Stack>
             </Stack>
           )}
           {error && <Alert severity="error">{error}</Alert>}
         </Stack>
       </DialogContent>
       <DialogActions>
-        <Button onClick={onClose}>Cancel</Button>
-        <Button variant="contained" disabled={busy} onClick={submit}>
-          {busy ? 'Creating…' : 'Create draft order'}
+        <Button onClick={onClose} disabled={busy}>Cancel</Button>
+        <Button variant="contained" disabled={busy || hostnameBad} onClick={submit}>
+          {busy ? 'Placing order…' : 'Create draft order'}
         </Button>
       </DialogActions>
     </Dialog>

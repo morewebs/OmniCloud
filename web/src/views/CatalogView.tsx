@@ -23,6 +23,7 @@ import { api, fmtBytes, post } from '../api';
 import { PageHeader } from '../components/PageHeader';
 import { EmptyState } from '../components/EmptyState';
 import { OrderDialog } from '../components/OrderDialog';
+import { usePageTitle } from '../usePageTitle';
 import type { Plan } from '../types';
 import { Toast } from '../components/Toast';
 import type { ToastMsg } from '../components/Toast';
@@ -34,6 +35,7 @@ interface CatalogPayload {
 }
 
 export function CatalogView() {
+  usePageTitle('Catalog');
   const qc = useQueryClient();
   const cat = useQuery<CatalogPayload>({ queryKey: ['catalog'],
     queryFn: () => api<CatalogPayload>('/api/catalog') });

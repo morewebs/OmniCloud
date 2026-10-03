@@ -253,7 +253,7 @@ function Shell({ user, themeMode, onToggleTheme }: {
         </Routes>
       </Box>
 
-      <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)}
+      <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} isAdmin={user.role === 'admin'}
                        onNavigate={to => { navigate(to); setPaletteOpen(false); }} />
     </Box>
   );

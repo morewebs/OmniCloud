@@ -2,38 +2,81 @@ import { useEffect, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import Alert from '@mui/material/Alert';
 import Button from '@mui/material/Button';
+import Skeleton from '@mui/material/Skeleton';
 import Stack from '@mui/material/Stack';
 import TextField from '@mui/material/TextField';
 import Typography from '@mui/material/Typography';
 import { api, put } from '../api';
 import type { AccountRow } from '../types';
+import { PageHeader } from '../components/PageHeader';
+import { Toast } from '../components/Toast';
+import type { ToastMsg } from '../components/Toast';
+import { usePageTitle } from '../usePageTitle';
 
 /** Sync intervals: visible, editable, live (no restart). */
 export function SettingsView() {
+  usePageTitle('Settings');
   const qc = useQueryClient();
   const settings = useQuery<Record<string, string>>({ queryKey: ['settings'],
     queryFn: () => api<Record<string, string>>('/api/settings') });
   const accounts = useQuery<AccountRow[]>({ queryKey: ['accounts'],
     queryFn: () => api<AccountRow[]>('/api/accounts') });
   const [form, setForm] = useState<Record<string, string>>({});
-  const [saved, setSaved] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [toast, setToast] = useState<ToastMsg>(null);
 
   useEffect(() => {
     if (settings.data) setForm(settings.data);
   }, [settings.data]);
 
-  if (settings.isPending || accounts.isPending) return null;
-  if (settings.isError) return <Alert severity="error">{(settings.error as Error).message}</Alert>;
+  if (settings.isPending || accounts.isPending) {
+    return <Stack spacing={2}>
+      <Skeleton variant="rounded" height={32} sx={{ maxWidth: 160 }} />
+      {Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} variant="rounded" height={56} />)}
+    </Stack>;
+  }
+  if (settings.isError) return (
+    <Stack spacing={2}>
+      <PageHeader title="Settings" />
+      <Alert severity="error"
+             action={<Button onClick={() => settings.refetch()}>Retry</Button>}>
+        {(settings.error as Error).message}
+      </Alert>
+    </Stack>
+  );
+  if (accounts.isError) return (
+    <Stack spacing={2}>
+      <PageHeader title="Settings" />
+      <Alert severity="error"
+             action={<Button onClick={() => accounts.refetch()}>Retry</Button>}>
+        Could not load accounts: {(accounts.error as Error).message}
+      </Alert>
+    </Stack>
+  );
+
+  const invalid = Object.entries(form).some(([k, v]) =>
+    k.startsWith('sync_interval:') && (!Number.isInteger(Number(v)) || Number(v) < 1));
 
   const save = async () => {
-    await put('/api/settings', form);
-    setSaved(true);
-    qc.invalidateQueries({ queryKey: ['fleet'] });
+    setBusy(true); setError(null);
+    try {
+      await put('/api/settings', form);
+      setToast({ message: 'Settings saved — apply on the next sync cycle', severity: 'success' });
+      qc.invalidateQueries({ queryKey: ['fleet'] });
+      qc.invalidateQueries({ queryKey: ['accounts'] });
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
   };
+
+  const dirty = JSON.stringify(form) !== JSON.stringify(settings.data);
 
   return (
     <Stack spacing={3}>
-      <Typography variant="h5">Settings</Typography>
+      <PageHeader title="Settings" subtitle="Sync intervals, visible and editable — no restart needed." />
 
       <Stack spacing={2} sx={{ maxWidth: 420 }}>
         <Typography variant="subtitle1">Sync intervals (minutes)</Typography>
@@ -41,9 +84,13 @@ export function SettingsView() {
           How often each provider account is refreshed. Changes apply on the
           next cycle without a restart.
         </Typography>
+        {accounts.data!.length === 0 && (
+          <Alert severity="info">No provider accounts yet — add one under Credentials.</Alert>
+        )}
         {accounts.data!.map(a => {
           const key = `sync_interval:${a.id}`;
           const val = form[key] ?? '5';
+          const bad = !Number.isInteger(Number(val)) || Number(val) < 1;
           return (
             <TextField
               key={a.id}
@@ -51,15 +98,25 @@ export function SettingsView() {
               label={`${a.name} (${a.adapter})`}
               value={val}
               onChange={e => setForm(f => ({ ...f, [key]: e.target.value }))}
-              type="number" size="small" slotProps={{ input: { inputProps: { min: 1 } } }}
+              type="number" size="small"
+              error={bad}
+              helperText={bad ? 'a whole number ≥ 1' : undefined}
             />
           );
         })}
-        <Stack direction="row" spacing={1}>
-          <Button variant="contained" onClick={save}>Save</Button>
-          {saved && <Alert severity="success" sx={{ py: 0 }}>Saved</Alert>}
-        </Stack>
+        {accounts.data!.length > 0 && (
+          <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
+            <Button variant="contained" onClick={save} disabled={busy || invalid}>
+              {busy ? 'Saving…' : 'Save'}
+            </Button>
+            <Button onClick={() => setForm(settings.data!)} disabled={busy || !dirty}>
+              Reset
+            </Button>
+          </Stack>
+        )}
+        {error && <Alert severity="error">{error}</Alert>}
       </Stack>
+      <Toast msg={toast} onClose={() => setToast(null)} />
     </Stack>
   );
 }

@@ -27,8 +27,25 @@ _loop: asyncio.AbstractEventLoop | None = None  # the app's main loop, set at st
 
 
 def publish(event: str, data: dict | None = None) -> None:
-    """Fan out an SSE event; dropped for slow consumers (they refetch on reconnect)."""
+    """Fan out an SSE event; dropped for slow consumers (they refetch on reconnect).
+
+    Thread-safe: sync `def` routes run in FastAPI's threadpool, and touching
+    asyncio queue waiter futures from off-loop threads corrupts them - so
+    when called from a thread (no running loop), hop onto the app loop.
+    """
     payload = json.dumps({"event": event, "data": data or {}})
+    try:
+        on_loop = asyncio.get_running_loop() is _loop
+    except RuntimeError:
+        on_loop = False
+    if not on_loop:
+        if _loop is not None and _loop.is_running():
+            _loop.call_soon_threadsafe(_fanout, payload)
+        return
+    _fanout(payload)
+
+
+def _fanout(payload: str) -> None:
     for q in list(_subscribers):
         with contextlib.suppress(asyncio.QueueFull):
             q.put_nowait(payload)
@@ -161,7 +178,11 @@ def _spawn(account_id: int) -> None:
         old.cancel()
     ev = asyncio.Event()
     _sync_events[account_id] = ev
-    # threadpool routes (def endpoints) have no loop: schedule on the app loop.
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return  # no loop (tests with start_all disabled) - nothing to spawn on
+    # threadpool routes (def endpoints) have no running loop: use the app loop.
     if _loop is not None and _loop.is_running():
         _loop.call_soon_threadsafe(
             lambda: _tasks.__setitem__(

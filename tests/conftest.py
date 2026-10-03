@@ -11,7 +11,10 @@ TEST_TOKEN = "fixture-token-0000000000000000000000000000abcd"  # never a real se
 
 @pytest.fixture(autouse=True)
 def test_env(monkeypatch):
-    """Temp DB + test master key per test."""
+    """Temp DB + test master key per test. Background loops (fleet sync,
+    catalog sync) are disabled by default: they would make LIVE provider
+    HTTP calls on every TestClient startup. Tests that want them re-enable
+    explicitly."""
     tmp = tempfile.mkdtemp(prefix="omni-test-")
     monkeypatch.setenv("OMNICLOUD_DB", os.path.join(tmp, "test.db"))
     monkeypatch.setenv("OMNICLOUD_MASTER_KEY", _fernet_key())
@@ -21,6 +24,10 @@ def test_env(monkeypatch):
     monkeypatch.setattr(config, "MASTER_KEY", _fernet_key())
     from server import db
     db.init()
+
+    from server import catalog, sync
+    monkeypatch.setattr(sync, "start_all", lambda: None)
+    monkeypatch.setattr(catalog, "start", lambda: None)
     yield
 
 

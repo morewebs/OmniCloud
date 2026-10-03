@@ -120,13 +120,25 @@ def execute(order_id: int, user_id: int) -> None:
     _transition(order_id, "executing", "provisioning started")
     _publish("order", {"order_id": order_id, "status": "executing"})
     # Spawn on the app loop (threadpool routes have none of their own).
+    # No loop at all (tests with start_all disabled): run to completion inline
+    # so the order still finishes instead of hanging in "executing".
     from . import sync
     loop = sync._loop
     coro = _execute_task(order_id, user_id, o)
     if loop is not None and loop.is_running():
         loop.call_soon_threadsafe(lambda: asyncio.create_task(coro, name=f"order-{order_id}"))
     else:
-        asyncio.create_task(coro, name=f"order-{order_id}")
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            # no loop anywhere (plain test context): schedule on a fresh loop
+            # thread so the prototype executor still completes
+            import threading
+            def _run():
+                asyncio.run(coro)
+            threading.Thread(target=_run, name=f"order-{order_id}", daemon=True).start()
+        else:
+            asyncio.create_task(coro, name=f"order-{order_id}")
 
 
 async def _execute_task(order_id: int, user_id: int, o: dict) -> None:

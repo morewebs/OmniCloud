@@ -10,7 +10,7 @@ import time
 from pathlib import Path
 
 from fastapi import FastAPI
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 STATIC = Path(__file__).parent / "server" / "static"
@@ -417,7 +417,92 @@ def openapi():
 
 @app.get("/api/{path:path}")
 def mock(path: str):
+    # live order detail: route to the mutable ORDERS list
+    if path.startswith("orders/"):
+        try:
+            oid = int(path.split("/")[1])
+            o = next(o for o in ORDERS if o["id"] == oid)
+        except (ValueError, StopIteration):
+            return JSONResponse({"detail": "no such order"}, status_code=404)
+        o = dict(o)
+        o["events"] = EVENTS.get(oid, [])
+        return o
     return ROUTES.get(f"/api/{path}", {})
+
+
+# mutable demo order state so the pipeline can be driven from the UI
+EVENTS: dict[int, list] = {
+    3: [{"status": "draft", "detail": None, "created_at": NOW},
+        {"status": "confirmed", "detail": None, "created_at": NOW}],
+    2: [{"status": "draft", "detail": None, "created_at": NOW},
+        {"status": "confirmed", "detail": None, "created_at": NOW},
+        {"status": "executing", "detail": "prototype - no server created",
+         "created_at": NOW},
+        {"status": "provisioned", "detail": None, "created_at": NOW}],
+}
+
+
+@app.post("/api/orders")
+async def create_order(body: dict):
+    plan = next((p for p in CATALOG["plans"][body["adapter"]]
+                 if p["name"] == body["plan_name"]), None)
+    if not plan:
+        return JSONResponse({"detail": "no such plan"}, status_code=400)
+    oid = max(o["id"] for o in ORDERS) + 1
+    est = plan["price_monthly"]
+    extra = body.get("options", {}).get("extra_ips", 0)
+    if extra and plan.get("extra_ip") and plan["extra_ip"].get("price"):
+        amt = float(est["amount"]) + extra * float(plan["extra_ip"]["price"]["amount"])
+        est = {**plan["price_monthly"], "amount": f"{amt:.2f}"}
+    o = _order(oid, "draft", body["adapter"], body["plan_name"],
+               body["location"], est["amount"], est["currency"], extra=extra)
+    ORDERS.insert(0, o)
+    EVENTS[oid] = [{"status": "draft", "detail": None, "created_at": NOW}]
+    return {"id": oid, "status": "draft"}
+
+
+@app.post("/api/orders/{oid}/confirm")
+async def confirm_order(oid: int):
+    return _transition(oid, {"confirmed"} if _status(oid) == "draft" else set())
+
+
+@app.post("/api/orders/{oid}/cancel")
+async def cancel_order(oid: int):
+    allowed = {"draft", "confirmed"} if _status(oid) in ("draft", "confirmed") else set()
+    return _transition(oid, allowed)
+
+
+@app.post("/api/orders/{oid}/execute")
+async def execute_order(oid: int):
+    s = _status(oid)
+    if s != "confirmed":
+        return JSONResponse({"detail": "cannot execute"}, status_code=409)
+    _transition(oid, {"executing"})
+    await asyncio.sleep(3)  # visible intermediate state, like the real prototype
+    _transition(oid, {"provisioned"})
+    return {"ok": True}
+
+
+def _status(oid: int) -> str:
+    o = next((o for o in ORDERS if o["id"] == oid), None)
+    if not o:
+        raise LookupError(oid)
+    return o["status"]
+
+
+def _transition(oid: int, allowed: set) -> dict:
+    """Apply the transition if allowed; 409 with the real pipeline's message."""
+    s = _status(oid)
+    if not allowed:
+        return JSONResponse({"detail": f"cannot transition from {s}"}, status_code=409)
+    o = next(o for o in ORDERS if o["id"] == oid)
+    o["status"] = next(iter(allowed))
+    o["updated_at"] = NOW
+    if o["status"] == "provisioned":
+        o["resulting_provider_id"] = f"proto-{oid}"
+    EVENTS.setdefault(oid, []).append(
+        {"status": o["status"], "detail": None, "created_at": NOW})
+    return {"ok": True}
 
 
 app.mount("/assets", StaticFiles(directory=STATIC / "assets"), name="assets")

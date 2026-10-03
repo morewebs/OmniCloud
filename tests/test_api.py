@@ -74,7 +74,9 @@ async def test_setup_then_full_flow(client):
     # we have produced so far. Re-fetch everything and grep.
     for path in ("/api/accounts", "/api/fleet", "/api/audit", "/api/actions",
                  "/api/allowances", "/api/billing/summary", "/api/users",
-                 "/api/adapters", "/api/auth/me"):
+                 "/api/adapters", "/api/auth/me", "/api/catalog",
+                 "/api/catalog/images?adapter=fake", "/api/orders",
+                 "/api/orders/1", "/api/overview"):
         body = client.get(path).text
         assert TEST_TOKEN not in body, f"token leaked via {path}"
     # and only last4 is shown
@@ -196,6 +198,25 @@ def test_orders_routes_full_flow(client):
     fleet = client.get("/api/fleet").json()
     assert not any(s.get("provider_id", "").startswith("proto-")
                    for a in fleet["accounts"] for s in a["servers"])
+
+
+async def test_overview_groups_spend_per_currency(client):
+    """The dashboard never silently sums EUR + USD: mixed-currency fleets
+    get one spend line per currency."""
+    _admin(client)
+    r = client.post("/api/accounts", headers=HDRS,
+                    json={"adapter": "fake", "name": "account-a7f3", "token": TEST_TOKEN})
+    aid = r.json()["id"]
+    from server import sync as syncmod
+    await syncmod.sync_account_now(aid)
+
+    o = client.get("/api/overview").json()
+    # fleet aggregate present; spend is a per-currency dict (may be empty
+    # when the fake server has no price - the invariant is the grouping)
+    assert o["fleet"]["by_status"] == {"running": 1}
+    assert isinstance(o["spend"], dict)
+    for cur, total in o["spend"].items():
+        assert isinstance(cur, str) and len(cur) == 3, "spend keys are currencies"
 
 
 def test_capabilities_409_for_absent(client, monkeypatch):

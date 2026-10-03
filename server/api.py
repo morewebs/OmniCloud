@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import StreamingResponse
@@ -41,9 +42,9 @@ def auth_status():
 
 @router.post("/auth/setup")
 def setup(body: SetupBody, response: Response):
-    if auth.user_count() > 0:
+    uid = auth.create_first_admin(body.username, body.password)
+    if uid is None:
         raise HTTPException(403, "setup is closed - an admin already exists")
-    uid = auth.create_user(body.username, body.password, role="admin")
     audit.record(uid, "user.create", f"user/{body.username}")
     token, _ = auth.login(body.username, body.password)
     _set_cookie(response, token)
@@ -55,11 +56,31 @@ class LoginBody(BaseModel):
     password: str
 
 
+# ponytail: in-memory per-username+IP backoff; a shared store if this ever
+# runs multi-worker
+_login_fails: dict[str, tuple[int, float]] = {}  # key -> (fails, locked_until)
+_MAX_FAILS, _LOCK_SECONDS = 5, 15 * 60
+
+
+def _login_key(body: LoginBody, request: Request) -> str:
+    ip = request.client.host if request.client else "?"
+    return f"{body.username}|{ip}"
+
+
 @router.post("/auth/login")
-def login(body: LoginBody, response: Response):
+def login(body: LoginBody, response: Response, request: Request):
+    import time as _time
+    key = _login_key(body, request)
+    fails, locked_until = _login_fails.get(key, (0, 0.0))
+    if _time.time() < locked_until:
+        remaining = int((locked_until - _time.time()) / 60) + 1
+        raise HTTPException(429, f"too many failed attempts - try again in {remaining} min")
     result = auth.login(body.username, body.password)
     if not result:
+        _login_fails[key] = (fails + 1,
+                             _time.time() + _LOCK_SECONDS if fails + 1 >= _MAX_FAILS else 0.0)
         raise HTTPException(401, "wrong username or password")
+    _login_fails.pop(key, None)
     token, user = result
     _set_cookie(response, token)
     return {"ok": True, "role": user.role, "username": user.username}
@@ -87,18 +108,23 @@ class PasswordBody(BaseModel):
 @router.patch("/auth/me")
 def change_password(body: PasswordBody, response: Response,
                     user: auth.User = Depends(auth.require_user)):
-    r = auth.login(user.username, body.current_password)
-    if not r:
+    if not auth.verify_credentials(user.username, body.current_password):
         raise HTTPException(403, "current password is wrong")
     with db.connect() as conn:
         conn.execute("UPDATE users SET password_hash=? WHERE id=?",
                      (auth.hash_password(body.new_password), user.id))
-    return {"ok": True}
+    # a changed password kills every session - the caller signs in again
+    auth.revoke_sessions(user.id)
+    response.delete_cookie(auth.COOKIE)
+    return {"ok": True, "relogin": True}
 
 
 def _set_cookie(response: Response, token: str) -> None:
+    # secure flag: default ON (production posture). OMNICLOUD_COOKIE_SECURE=0
+    # only for plain-HTTP local dev - see DEPLOY.md.
+    secure = os.environ.get("OMNICLOUD_COOKIE_SECURE", "1") not in ("0", "false")
     response.set_cookie(auth.COOKIE, token, httponly=True, samesite="strict",
-                        max_age=config.SESSION_TTL_DAYS * 86400)
+                        secure=secure, max_age=config.SESSION_TTL_DAYS * 86400)
 
 
 # -- fleet --------------------------------------------------------------------
@@ -655,6 +681,9 @@ def patch_user(user_id: int, body: UserPatch, user: auth.User = Depends(auth.req
         if body.password is not None:
             conn.execute("UPDATE users SET password_hash=? WHERE id=?",
                          (auth.hash_password(body.password), user_id))
+    if body.disabled or body.password is not None:
+        # a reset password or a disabled account kills the target's sessions
+        auth.revoke_sessions(user_id)
     audit.record(user.id, "user.update", f"user/{row['username']}")
     return {"ok": True}
 

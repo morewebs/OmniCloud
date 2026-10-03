@@ -18,6 +18,7 @@ def test_env(monkeypatch):
     tmp = tempfile.mkdtemp(prefix="omni-test-")
     monkeypatch.setenv("OMNICLOUD_DB", os.path.join(tmp, "test.db"))
     monkeypatch.setenv("OMNICLOUD_MASTER_KEY", _fernet_key())
+    monkeypatch.setenv("OMNICLOUD_COOKIE_SECURE", "0")  # TestClient speaks plain HTTP
     # config reads env at import; force re-read
     from server import config
     monkeypatch.setattr(config, "DB_PATH", Path(os.path.join(tmp, "test.db")))

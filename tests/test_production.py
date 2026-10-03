@@ -91,3 +91,93 @@ def test_double_execute_race_only_one_wins(uid):
             "SELECT status FROM order_events WHERE order_id=? AND status='executing'",
             (oid,)).fetchall()
     assert len(evs) == 1, f"{len(evs)} executing events - the race leaked through"
+
+
+HDRS = {"X-Requested-With": "XMLHttpRequest"}
+
+
+def test_login_lockout_after_five_failures(client):
+    """5 bad logins -> 429 lockout, not unlimited brute force."""
+    client.post("/api/auth/setup", json={"username": "admin", "password": "pw123456"},
+                headers=HDRS)
+    client.post("/api/auth/logout", headers=HDRS)
+    for _ in range(5):
+        r = client.post("/api/auth/login",
+                        json={"username": "admin", "password": "wrong"},
+                        headers=HDRS)
+        assert r.status_code == 401
+    r = client.post("/api/auth/login",
+                    json={"username": "admin", "password": "pw123456"},
+                    headers=HDRS)
+    assert r.status_code == 429
+    assert "try again" in r.json()["detail"]
+
+
+def test_login_timing_does_not_reveal_usernames(client):
+    """Absent-user logins burn the same scrypt cost as real ones. Distinct
+    usernames dodge the rate limiter (a locked-out request returns instantly
+    and would fake the timing)."""
+    client.post("/api/auth/setup", json={"username": "admin", "password": "pw123456"},
+                headers=HDRS)
+    client.post("/api/auth/logout", headers=HDRS)
+    def attempt(u):
+        t0 = time.perf_counter()
+        client.post("/api/auth/login", json={"username": u, "password": "wrongpw"},
+                    headers=HDRS)
+        return time.perf_counter() - t0
+    # real user, absent user - each measured 3x with fresh usernames
+    real = min(attempt("admin") for _ in range(3))
+    fake = min(attempt(f"no-such-user-{i}") for i in range(3))
+    assert abs(real - fake) < 0.15, f"timing gap {real - fake:.3f}s reveals usernames"
+
+
+def test_password_change_kills_sessions(client):
+    client.post("/api/auth/setup", json={"username": "admin", "password": "pw123456"},
+                headers=HDRS)
+    r = client.patch("/api/auth/me",
+                     json={"current_password": "pw123456", "new_password": "newpw999"},
+                     headers=HDRS)
+    assert r.status_code == 200
+    # the old session cookie no longer authenticates
+    assert client.get("/api/fleet", headers=HDRS).status_code == 401
+
+
+def test_concurrent_setup_creates_exactly_one_admin():
+    """TOCTOU-safe first-run: two parallel setups, one wins."""
+    import concurrent.futures
+    from server import auth
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as ex:
+        futs = [ex.submit(auth.create_first_admin, f"admin{i}", "pw123456")
+                for i in range(2)]
+        results = [f.result() for f in futs]
+    assert sum(1 for r in results if r is not None) == 1
+    assert auth.user_count() == 1
+
+
+def test_expired_sessions_swept_on_login(client):
+    """login() sweeps expired rows; sessions table never grows unbounded."""
+    from server import db
+    client.post("/api/auth/setup", json={"username": "admin", "password": "pw123456"},
+                headers=HDRS)
+    with db.connect() as conn:
+        conn.execute("INSERT INTO sessions(token_hash, user_id, created_at, expires_at) "
+                     "VALUES('dead1', 1, '2000-01-01', '2000-01-02'), "
+                     "('dead2', 1, '2000-01-01', '2000-01-02')")
+    client.post("/api/auth/login",
+                json={"username": "admin", "password": "pw123456"}, headers=HDRS)
+    with db.connect() as conn:
+        n = conn.execute("SELECT COUNT(*) FROM sessions WHERE token_hash IN "
+                         "('dead1','dead2')").fetchone()[0]
+    assert n == 0
+
+
+@pytest.fixture
+def client(monkeypatch):
+    from server import accounts as accounts_mod, api as api_mod
+    from server.main import create_app
+    from conftest import FakeAdapter
+    monkeypatch.setitem(accounts_mod.ADAPTERS, "fake", FakeAdapter)
+    api_mod._login_fails.clear()  # locks are per-process state; never leak between tests
+    app = create_app()
+    with TestClient(app) as c:
+        yield c

@@ -1,3 +1,4 @@
+import asyncio
 import json
 import os
 import tempfile
@@ -27,9 +28,16 @@ def test_env(monkeypatch):
     db.init()
 
     from server import catalog, sync
-    monkeypatch.setattr(sync, "start_all", lambda: None)
+
+    # neuter the sync loops (live provider HTTP) but keep sync._loop wired to
+    # the app loop, so order execution tests the PRODUCTION executor branch
+    # (call_soon_threadsafe) instead of only the no-loop fallback thread
+    def _start_all_no_tasks():
+        sync._loop = asyncio.get_running_loop()
+    monkeypatch.setattr(sync, "start_all", _start_all_no_tasks)
     monkeypatch.setattr(catalog, "start", lambda: None)
     yield
+    sync._loop = None
 
 
 def _fernet_key() -> str:

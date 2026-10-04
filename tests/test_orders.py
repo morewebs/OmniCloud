@@ -106,3 +106,30 @@ async def test_audit_and_no_fleet_pollution(uid):
     with db.connect() as conn:
         n = conn.execute("SELECT COUNT(*) FROM servers").fetchone()[0]
     assert n == 0
+
+
+async def test_execute_fallback_thread_path(uid):
+    """The no-loop fallback branch (sync._loop unset, e.g. bare CLI usage)
+    must still complete the order - explicit coverage of the OTHER branch."""
+    import server.sync as sync
+    from server import catalog, orders
+    from server.adapters.base import Money, Plan
+    catalog.store("fake", [Plan(adapter="fake", name="plan-a", location="loc-1",
+                                price_monthly=Money(amount="1.00", currency="EUR"))],
+                  "live", None)
+    oid = orders.create_order(uid, "fake", "plan-a", "loc-1", {})
+    orders.confirm(oid, uid)
+    saved_loop = sync._loop
+    sync._loop = None  # force the fallback branch
+    try:
+        orders.execute(oid, uid)
+        for _ in range(40):  # up to ~4s for the fallback thread
+            await asyncio.sleep(0.1)
+            with db.connect() as conn:
+                st = conn.execute("SELECT status FROM orders WHERE id=?",
+                                  (oid,)).fetchone()["status"]
+            if st == "provisioned":
+                break
+        assert st == "provisioned", f"fallback path stalled at {st}"
+    finally:
+        sync._loop = saved_loop

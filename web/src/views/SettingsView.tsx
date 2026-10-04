@@ -274,7 +274,7 @@ function UpdatePanel({ onToast }: { onToast: (m: string, s?: 'success' | 'error'
           </Stack>
         </Alert>
       )}
-      {!available && d.checked_at && (
+      {!available && d.checked_at && !d.error && (
         <Typography variant="caption" sx={{ color: 'text.secondary' }}>
           up to date · last checked {new Date(d.checked_at).toLocaleString()}
         </Typography>

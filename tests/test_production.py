@@ -40,7 +40,14 @@ def test_testclient_never_touches_the_network(monkeypatch):
 
     calls = []
 
+    real_client_send = httpx.Client.send
+    real_async_send = httpx.AsyncClient.send
+
     def poison(self, request, **kw):
+        # testserver = the TestClient's own ASGI transport, not real network
+        if "testserver" in str(request.url):
+            return (real_async_send if isinstance(self, httpx.AsyncClient)
+                    else real_client_send)(self, request, **kw)
         calls.append(str(request.url))
         raise AssertionError(f"outbound HTTP during test: {request.url}")
 

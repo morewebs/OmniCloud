@@ -11,8 +11,9 @@ RUN npm run build           # -> /build/server/static
 FROM python:3.12-slim
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 WORKDIR /app
-# deps first (cached while only code changes)
-COPY pyproject.toml uv.lock ./
+# deps first (cached while only code changes). README.md is needed by the
+# build backend (pyproject readme=) - it changes rarely, so it stays here.
+COPY pyproject.toml uv.lock README.md ./
 RUN uv sync --frozen --no-dev
 COPY server/ ./server/
 COPY --from=web /build/server/static ./server/static

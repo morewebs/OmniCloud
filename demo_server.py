@@ -157,11 +157,27 @@ ADAPTERS = [
 ]
 
 # Shared firewalls across batches of servers (the real Hetzner workflow).
+# rule_detail mirrors the adapter passthrough: Hetzner exposes rules, other
+# adapters would omit the key (the UI then shows "not exposed").
 FIREWALLS = [
     {"id": 1710054, "name": "batch-edge-fs", "rules": 3, "applied_to_count": 148,
-     "applied_server_ids": [4211111, 4211112, 5000000, 5000012]},
+     "applied_server_ids": [4211111, 4211112, 5000000, 5000012],
+     "rule_detail": [
+         {"direction": "in", "protocol": "tcp", "port": "22",
+          "source_ips": ["203.0.113.0/24"]},
+         {"direction": "in", "protocol": "tcp", "port": "80,443",
+          "source_ips": []},
+         {"direction": "out", "protocol": "tcp", "port": "",
+          "source_ips": []},
+     ]},
     {"id": 1710055, "name": "batch-edge-us", "rules": 2, "applied_to_count": 24,
-     "applied_server_ids": [4211113, 5000003]},
+     "applied_server_ids": [4211113, 5000003],
+     "rule_detail": [
+         {"direction": "in", "protocol": "tcp", "port": "22",
+          "source_ips": ["198.51.100.7"]},
+         {"direction": "in", "protocol": "tcp", "port": "443",
+          "source_ips": []},
+     ]},
     {"id": 1710056, "name": "batch-monitor", "rules": 5, "applied_to_count": 8,
      "applied_server_ids": [5000064]},
     {"id": 1710057, "name": "batch-wireguard", "rules": 4, "applied_to_count": 41,
@@ -326,11 +342,18 @@ TRAFFIC_DAYS = [
     for i, d in enumerate(range(1, 4))
 ]
 
+# per-day spend by currency, first_seen-gated like the real endpoint: the
+# fleet's EUR base is the same every day here (no new priced servers added)
+SPEND_DAYS = [
+    {"day": d["day"], "spend": {"EUR": 836.0}} for d in TRAFFIC_DAYS
+]
+
 OVERVIEW = {
     "fleet": {"total": 200, "by_status": {"running": 188, "unknown": 11, "off": 1}},
     "spend": {"hetzner": {"EUR": 743.6}, "leaseweb": {"EUR": 92.4}},
     "projected_overage": {"EUR": 0.30},
     "traffic_days": TRAFFIC_DAYS,
+    "spend_days": SPEND_DAYS,
     "recent_actions": [
         {"id": 12, "kind": "rebuild", "status": "in_progress", "detail": None,
          "created_at": NOW, "username": "demo-admin"},
@@ -346,6 +369,8 @@ OVERVIEW = {
          "estimated_monthly": '{"amount": "9.90", "currency": "USD"}', "created_at": NOW},
     ],
     "alerts": [
+        {"kind": "down", "server": "srv-nbg1-04", "adapter": "hetzner", "status": "off"},
+        {"kind": "down", "server": "srv-fra1-05", "adapter": "leaseweb", "status": "unknown"},
         {"kind": "allowance", "server": "srv-hil1-02", "adapter": "hetzner", "pct": 85},
         {"kind": "allowance", "server": "srv-ash1-03", "adapter": "hetzner", "pct": 127},
         {"kind": "sync", "account_id": 2, "error": "AdapterError: 429 rate limited"},
@@ -376,7 +401,7 @@ ROUTES = {
         {"id": 1, "name": "backup-script", "created_at": "2026-09-20T12:00:00+00:00",
          "last_used_at": "2026-10-04T06:00:00+00:00"},
     ],
-    "/api/update/status": {"current": "0.2.0", "latest": None, "repo": "morewebs/OmniCloud",
+    "/api/update/status": {"current": "0.3.0", "latest": None, "repo": "morewebs/OmniCloud",
                            "checked_at": "2026-10-03T09:00:00+00:00", "notes": None,
                            "url": None, "error": None, "applying": False},
     "/api/actions": [
@@ -420,6 +445,36 @@ def server_detail(account_id: int, provider_id: str):
 @app.get("/api/openapi.json")
 def openapi():
     return {"openapi": "3.1.0", "info": {"title": "OmniCloud demo"}, "paths": {}}
+
+
+# -- personal API tokens: mutable so the Settings panel works in the demo.
+# Registered before the /api/{path} catch-all - FastAPI matches in order. --
+TOKENS = list(ROUTES["/api/auth/tokens"])  # start from the seed rows
+
+
+@app.get("/api/auth/tokens")
+def list_tokens():
+    return TOKENS
+
+
+@app.post("/api/auth/tokens")
+async def create_token(body: dict):
+    tid = max([t["id"] for t in TOKENS], default=0) + 1
+    import secrets
+    TOKENS.insert(0, {"id": tid, "name": body.get("name", "token"),
+                     "created_at": NOW, "last_used_at": None})
+    # plaintext is shown exactly once - like the real server
+    return {"id": tid, "name": body.get("name", "token"),
+            "token": secrets.token_urlsafe(32)}
+
+
+@app.delete("/api/auth/tokens/{tid}")
+def revoke_token(tid: int):
+    global TOKENS
+    if not any(t["id"] == tid for t in TOKENS):
+        return JSONResponse({"detail": "no such token"}, status_code=404)
+    TOKENS = [t for t in TOKENS if t["id"] != tid]
+    return {"ok": True}
 
 
 @app.get("/api/{path:path}")

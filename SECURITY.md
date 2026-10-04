@@ -23,6 +23,12 @@ an install as critical infrastructure:
 - Auth: scrypt-hashed passwords, opaque session cookies (HttpOnly,
   SameSite=Strict, Secure by default), per-username lockout, CSRF via the
   required `X-Requested-With` header on every non-GET `/api` request.
+- **Personal API tokens** (0.3.0): sha256-hashed at rest, plaintext shown
+  exactly once at creation, bearer-authenticated, carry the creator's role
+  (a viewer's token cannot mutate), revocable at any time. Bearer requests
+  skip the CSRF header check — no cookie is attached, so there is nothing
+  to forge. A leaked token is high-severity: revoke it in Settings → API
+  tokens.
 
 ## Hardening checklist for operators
 

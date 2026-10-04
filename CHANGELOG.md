@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.3.0 (2026-10-04)
+
+One interface tuned for owner, engineer, and developer at once:
+attention on money and health first, technical depth one click down,
+API access for scripts and tools.
+
+- **Money & health first**: Overview leads with a down-server banner and
+  a "This month's bill" tile (base + projected overage, per currency,
+  never summed across currencies) plus a spend-over-time chart. New
+  servers never backfill spend history.
+- **Fleet depth one click down**: traffic sparklines in the fleet table,
+  per-day traffic numbers with CSV export, server labels as chips with an
+  inline relabel editor, firewall rules viewable where the adapter exposes
+  them ("not exposed" otherwise), raw server JSON with download, and a
+  full actions log toggle on Overview.
+- **Developer unlocked**: personal API tokens (hashed at rest, shown once,
+  revocable, Bearer auth alongside the session cookie; bearer requests
+  skip CSRF — no cookie to forge), interactive API docs at `/api/docs`,
+  and an "extend it" footer on the Adapters view.
+- **Data exports**: billing CSV and traffic CSV.
+- **DB schema v3** (additive — `api_tokens` table, no migration needed).
+
 ## 0.2.0 (2026-10-03)
 
 Plan marketplace, prototype ordering, production hardening.

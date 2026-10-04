@@ -26,14 +26,17 @@ def test_is_newer_semver():
 
 
 async def test_check_parses_github_release():
-    from server import update
+    from server import update, version
+    # the mocked release must be NEWER than the current version, whatever
+    # that is on release day - derive it instead of hardcoding
+    bumped = f"{version.VERSION.rsplit('.', 1)[0]}.{int(version.VERSION.rsplit('.', 1)[1]) + 1}"
     class FakeClient:
         def __init__(self, **kw): pass
         async def __aenter__(self): return self
         async def __aexit__(self, *a): pass
         async def get(self, url, headers=None):
             r = httpx.Response(200, json={
-                "tag_name": "v0.3.0", "html_url": "https://example/r",
+                "tag_name": f"v{bumped}", "html_url": "https://example/r",
                 "body": "release notes"})
             r.request = httpx.Request("GET", url)
             return r
@@ -43,11 +46,11 @@ async def test_check_parses_github_release():
         st = await update.check()
     finally:
         httpx.AsyncClient = orig
-    assert st["latest"] == "0.3.0"
-    assert st["available"] is True  # 0.3.0 > current
+    assert st["latest"] == bumped
+    assert st["available"] is True  # bumped > current by construction
     assert st["url"] == "https://example/r"
     assert st["error"] is None
-    assert update.status()["latest"] == "0.3.0"
+    assert update.status()["latest"] == bumped
 
 
 async def test_check_failure_is_silent():

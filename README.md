@@ -5,7 +5,10 @@
 
 An open-source, multi-provider cloud control panel. OmniCloud aggregates
 server fleets, traffic allowances, billing exposure, and a plan marketplace
-across cloud providers behind one canonical data model.
+across cloud providers behind one canonical data model. The dashboard is
+ordered by what needs attention first — is anything down, what will this
+month cost — with technical depth one click down and a JSON API for
+scripts and tools.
 
 **Server management:** Hetzner Cloud, LeaseWeb.
 **Plan marketplace (7 providers):** Hetzner, LeaseWeb, OVHcloud, Gcore,
@@ -26,6 +29,13 @@ cd web && npm install && npm run dev   # http://localhost:5173, proxies /api
 # or: build the SPA once and serve everything from one process
 cd web && npm run build                # outputs to server/static/
 uv run uvicorn server.main:app --port 8000   # http://localhost:8000
+```
+
+**Just want to look around?** A demo with mock data (200 servers, orders,
+billing, down servers) runs the real UI with zero setup:
+
+```bash
+uv run python demo_server.py          # http://localhost:8080, no login
 ```
 
 First visit shows a one-time setup screen that creates the first admin

@@ -179,6 +179,7 @@ export function FleetView() {
       <Stack direction="row" spacing={1.5} sx={{ alignItems: 'center', flexWrap: 'wrap', gap: 1.5 }}>
         <TextField
           size="small" placeholder="Search name, IP, provider, region"
+          aria-label="Search servers"
           value={search} onChange={e => setSearch(e.target.value)}
           sx={{ maxWidth: 340 }}
           slotProps={{ input: { startAdornment: (

@@ -26,6 +26,9 @@ export function AdaptersView() {
 
   if (adapters.isPending || accounts.isPending) return null;
   if (adapters.isError) return <Alert severity="error">{(adapters.error as Error).message}</Alert>;
+  // an accounts failure must not throw in render (ErrorBoundary) - degrade
+  // to "unknown account count" instead
+  if (accounts.isError) return <Alert severity="error">{(accounts.error as Error).message}</Alert>;
 
   const fleet = adapters.data!.filter(a => !a.source);
   const catalogOnly = adapters.data!.filter(a => a.source);

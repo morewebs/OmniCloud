@@ -86,7 +86,14 @@ export function OrdersView() {
               </TableHead>
               <TableBody>
                 {orders.data!.map(o => (
-                  <TableRow key={o.id} hover onClick={() => setDetailId(o.id)}
+                  <TableRow key={o.id} hover tabIndex={0} aria-label={`Order ${o.id}`}
+                            onClick={() => setDetailId(o.id)}
+                            onKeyDown={e => {
+                              if (e.key === 'Enter' || e.key === ' ') {
+                                e.preventDefault();
+                                setDetailId(o.id);
+                              }
+                            }}
                             sx={{ cursor: 'pointer' }}>
                     <TableCell className="num">{o.id}</TableCell>
                     <TableCell sx={{ fontWeight: 500 }}>{o.plan_name}</TableCell>

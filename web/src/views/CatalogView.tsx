@@ -173,6 +173,7 @@ export function CatalogView() {
                     <TableRow key={key} hover>
                       <TableCell padding="checkbox">
                         <Checkbox size="small" checked={inCompare}
+                          aria-label={`Compare ${p.name}`}
                           disabled={!inCompare && compare.length >= 4}
                           onChange={() => setCompare(c =>
                             inCompare ? c.filter(x => x !== key) : [...c, key])} />
@@ -228,7 +229,10 @@ export function CatalogView() {
 
       {compare.length > 1 && (
         <CompareDialog
-          plans={compare.map(k => allPlans.find(p => `${p.adapter}|${p.name}|${p.location}` === k)!)}
+          // a catalog refetch can vanish a checked plan mid-compare -
+          // drop missing keys instead of crashing render on undefined
+          plans={compare.flatMap(k => allPlans
+            .filter(p => `${p.adapter}|${p.name}|${p.location}` === k))}
           onClose={() => setCompare([])}
         />
       )}

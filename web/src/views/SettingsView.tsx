@@ -127,8 +127,8 @@ export function SettingsView() {
 
 interface UpdateState {
   current: string; latest: string | null; repo: string;
-  checked_at: string | null; notes: string | null; url: string | null;
-  error: string | null; applying: boolean;
+  available: boolean; checked_at: string | null; notes: string | null;
+  url: string | null; error: string | null; applying: boolean;
 }
 
 function UpdatePanel({ onToast }: { onToast: (m: string, s?: 'success' | 'error') => void }) {
@@ -138,7 +138,7 @@ function UpdatePanel({ onToast }: { onToast: (m: string, s?: 'success' | 'error'
   const [applying, setApplying] = useState(false);
   if (u.isPending) return null;
   const d = u.data!;
-  const available = !!d.latest && d.latest !== d.current;
+  const available = d.available;  // server-side semver compare, not string !=
   return (
     <Stack spacing={1.5} sx={{ maxWidth: 560 }}>
       <Stack direction="row" spacing={1.5} sx={{ alignItems: 'center' }}>

@@ -30,8 +30,8 @@ API_URL = f"https://api.github.com/repos/{REPO}/releases/latest"
 EXIT_UPDATE = 78
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-_status: dict = {"checked_at": None, "latest": None, "notes": None,
-                "url": None, "error": None, "applying": False}
+_status: dict = {"checked_at": None, "latest": None, "available": False,
+                "notes": None, "url": None, "error": None, "applying": False}
 
 
 def status() -> dict:
@@ -46,10 +46,13 @@ async def check() -> dict:
             r.raise_for_status()
             rel = r.json()
         _status.update(checked_at=_now(), latest=rel.get("tag_name", "").lstrip("v"),
+                       available=is_newer(rel.get("tag_name", "").lstrip("v"),
+                                         version.VERSION),
                        notes=(rel.get("body") or "")[:2000],
                        url=rel.get("html_url"), error=None)
     except Exception as e:  # noqa: BLE001 - a failed check is not an incident
-        _status.update(checked_at=_now(), latest=None, error=f"{type(e).__name__}: {e}"[:300])
+        _status.update(checked_at=_now(), latest=None, available=False,
+                      error=f"{type(e).__name__}: {e}"[:300])
         log.info("update check failed: %s", _status["error"])
     return status()
 
@@ -74,9 +77,17 @@ async def apply() -> dict:
     pre-flight failure; a successful apply ends the process."""
     if _status["applying"]:
         raise RuntimeError("an update is already in progress")
-    if not REPO_ROOT.is_dir() or subprocess.run(
-            ["git", "rev-parse", "--is-inside-work-tree"], cwd=REPO_ROOT,
-            capture_output=True).returncode != 0:
+    if not _status["available"]:
+        raise RuntimeError("no newer version is known - check for updates first")
+    if not REPO_ROOT.is_dir():
+        raise RuntimeError("this install is not a git checkout - "
+                           "update manually (see DEPLOY.md)")
+    try:
+        inside = subprocess.run(["git", "rev-parse", "--is-inside-work-tree"],
+                                cwd=REPO_ROOT, capture_output=True)
+    except FileNotFoundError:
+        raise RuntimeError("git is not installed - update manually (see DEPLOY.md)")
+    if inside.returncode != 0:
         raise RuntimeError("this install is not a git checkout - "
                            "update manually (see DEPLOY.md)")
     # a dirty tree would conflict with the pull
@@ -89,6 +100,14 @@ async def apply() -> dict:
         raise RuntimeError("web/ missing - cannot rebuild the SPA")
     _status["applying"] = True
     log.info("applying update to %s", _status.get("latest"))
+    # quiesce: stop the sync/catalog loops and drain in-flight work so the
+    # exit can't land mid-transaction (same pattern as app shutdown)
+    from . import catalog, sync
+    sync.stop_all()
+    catalog.stop()
+    pending = [t for t in asyncio.all_tasks() if not t.done()]
+    if pending:
+        await asyncio.wait(pending, timeout=5)
     # run the steps out-of-band; the final exit can't be awaited
     asyncio.get_running_loop().run_in_executor(
         None, _apply_sequence)

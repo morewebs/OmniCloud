@@ -67,15 +67,25 @@ safe as a load-balancer / watchdog probe.
 
 ## Updating
 
-**Built-in (preferred):** Settings → Panel update. It checks GitHub daily
-and one click runs: `git pull` → `uv sync` → `npm install && npm run build` →
-the process **exits with code 78**. Your supervisor restarts it on the new
-code. Configure the restart:
+**Built-in (git checkout installs):** Settings → Panel update. It checks
+GitHub daily and one click runs: `git pull` → `uv sync` → `npm install &&
+npm run build` → the process **exits with code 78**. Your supervisor
+restarts it on the new code. Configure the restart:
 
-- Docker: `docker run --restart unless-stopped ...` (already sufficient)
 - systemd: `Restart=always` (or `RestartForceExitStatus=78` if you restrict restarts)
-- loop script: `until ! uv run uvicorn server.main:app; [ $? -ne 78 ]; do :; done`
+- loop script: `while true; do uv run uvicorn server.main:app; [ $? -ne 78 ] && break; done`
   — or simply restart on any exit; 78 is just the documented handshake.
+
+**Docker installs update by rebuilding the image** — the container has no
+git or node, so the built-in apply is not for Docker (its update panel will
+say so):
+
+```bash
+git pull
+docker build -t omnicloud .
+docker stop omnicloud && docker rm omnicloud
+# then re-run your docker run command (same -v volume keeps the DB)
+```
 
 **Manual** (non-git installs, no node on the box):
 

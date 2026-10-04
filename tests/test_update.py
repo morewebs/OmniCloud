@@ -42,6 +42,7 @@ async def test_check_parses_github_release():
     finally:
         httpx.AsyncClient = orig
     assert st["latest"] == "0.3.0"
+    assert st["available"] is True  # 0.3.0 > current
     assert st["url"] == "https://example/r"
     assert st["error"] is None
     assert update.status()["latest"] == "0.3.0"
@@ -68,14 +69,18 @@ async def test_check_failure_is_silent():
 
 async def test_apply_preflight_guards():
     from server import update
-    # not a git checkout (a temp dir is not one)
-    root = update.REPO_ROOT
-    update.REPO_ROOT = root.parent / "nonexistent"
+    update._status.update(available=True, latest="9.9.9", applying=False)
     try:
-        with pytest.raises(RuntimeError, match="not a git checkout"):
-            await update.apply()
+        # not a git checkout (a temp dir is not one)
+        root = update.REPO_ROOT
+        update.REPO_ROOT = root.parent / "nonexistent"
+        try:
+            with pytest.raises(RuntimeError, match="not a git checkout"):
+                await update.apply()
+        finally:
+            update.REPO_ROOT = root
     finally:
-        update.REPO_ROOT = root
+        update._status.update(available=False, latest=None, applying=False)
 
 
 @pytest.fixture
@@ -104,3 +109,32 @@ def test_update_routes_permissions(client):
     r = client.post("/api/update/apply", headers=HDRS)
     assert r.status_code == 403
     assert client.post("/api/update/check", headers=HDRS).status_code == 200
+
+
+async def test_apply_refuses_when_no_update_known():
+    """A never-checked (or failed-check) panel must not blind-apply a pull."""
+    from server import update
+    update._status.update(available=False, latest=None, applying=False)
+    try:
+        with pytest.raises(RuntimeError, match="no newer version"):
+            await update.apply()
+    finally:
+        update._status.update(available=False, latest=None, applying=False)
+
+
+async def test_apply_missing_git_binary_is_friendly():
+    """No git on the box -> the 'update manually' error, not a 500."""
+    from server import update
+    update._status.update(available=True, latest="9.9.9", applying=False)
+    orig = update.subprocess.run
+
+    def no_git(cmd, *a, **kw):
+        raise FileNotFoundError("git not found")
+
+    update.subprocess.run = no_git
+    try:
+        with pytest.raises(RuntimeError, match="git is not installed"):
+            await update.apply()
+    finally:
+        update.subprocess.run = orig
+        update._status.update(available=False, latest=None, applying=False)

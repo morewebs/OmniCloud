@@ -1,0 +1,15 @@
+{
+  "serviceId": 111111,
+  "domain": "vps-demo1.demo.ovh.net",
+  "creation": "2026-08-14T09:30:00+02:00",
+  "expiration": "2027-08-14",
+  "engagedUpTo": null,
+  "status": "ok",
+  "renewalType": "automaticV2016",
+  "renew": {"automatic": true, "forced": false, "deleteAtExpiration": false, "manualPayment": false, "period": 1},
+  "possibleRenewPeriod": [1, 12, 24],
+  "contactAdmin": "aa1111-ovh",
+  "contactBilling": "aa1111-ovh",
+  "contactTech": "aa1111-ovh",
+  "canDeleteAtExpiration": false
+}

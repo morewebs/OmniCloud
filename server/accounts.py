@@ -5,11 +5,13 @@ from . import config, db, secrets
 from .adapters.base import Capability, ProviderAdapter
 from .adapters.hetzner import HetznerAdapter
 from .adapters.leaseweb import LeasewebAdapter
+from .adapters.ovh import OvhAdapter
 
 # Registry: adapters that ship. Roadmap adapters slot in here only.
 ADAPTERS: dict[str, type[ProviderAdapter]] = {
     HetznerAdapter.key: HetznerAdapter,
     LeasewebAdapter.key: LeasewebAdapter,
+    OvhAdapter.key: OvhAdapter,
 }
 
 

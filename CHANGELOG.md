@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+- **OVHcloud fleet adapter** (VPS + Public Cloud instances under one
+  account): power actions, rename, cloud-instance delete — each confirmed
+  by the provider's own view (task poll / status poll), never by an
+  accepted response. Both auth schemes via one packed credential string:
+  `AK:AS:CK` (classic SHA1-signed API keys) or `client_id:client_secret`
+  (OAuth2 service account). Per-instance monthly price for monthly-billed
+  cloud instances (regional pricing join); hourly-billed instances
+  honestly show no monthly price. Cloud instances expose real per-instance
+  outgoing traffic for the current month; VPS is unmetered — traffic,
+  price and labels read *not exposed* there. VPS deletion stays a
+  deliberate two-step in the OVH manager (the panel refuses, pointing
+  there). All facts cited in docs/provider-truth.md.
+
 ## 0.3.0 (2026-10-04)
 
 One interface tuned for owner, engineer, and developer at once:

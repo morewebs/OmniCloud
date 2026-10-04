@@ -136,6 +136,118 @@ def mock_leaseweb_transport():
     return httpx.MockTransport(handler), calls
 
 
+def mock_ovh_transport(bearer_only=False):
+    """OVH MockTransport serving both auth endpoints and both product trees.
+    Stateful like leaseweb's: VPS power POSTs set a task state the next task
+    GET returns; cloud power POSTs flip the instance status; cloud DELETE
+    makes the instance GET 404. Returns (transport, calls, headers) -
+    headers captures X-Ovh-*/Authorization per call for the auth assertions.
+    bearer_only=True serves only the auth endpoints (auth-specific tests)."""
+    import re
+
+    import httpx
+
+    calls: list[str] = []
+    headers: list[dict] = []
+
+    vps_task_state = {"state": "todo"}
+    cloud_status: dict[str, str] = {}
+    cloud_deleted: set[str] = set()
+    vps_renamed: dict[str, str] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        url = str(request.url)
+        # the API base URL is https://eu.api.ovh.com/1.0 - strip the /1.0
+        # prefix so the fixtures below check plain paths
+        path = request.url.path.removeprefix("/1.0")
+        calls.append(url)
+        headers.append(dict(request.headers))
+        # -- auth endpoints (never signed/Bearer'd by the adapter) ----------
+        if url == "https://www.ovh.com/auth/oauth2/token":
+            return httpx.Response(200, json=fixture("ovh/oauth_token.json"))
+        if path == "/auth/time":
+            return httpx.Response(200, json=fixture("ovh/auth_time.json"))
+        if bearer_only:
+            return httpx.Response(404)
+        # -- VPS -----------------------------------------------------------
+        if path == "/vps":
+            return httpx.Response(200, json=fixture("ovh/vps_list.json"))
+        m = re.match(r"^/vps/([^/]+)/tasks/(\d+)$", path)
+        if m:
+            # a pending task flips to done on its SECOND poll so tests can
+            # observe the todo -> done transition (or never, for timeout)
+            if vps_task_state["state"] == "todo":
+                vps_task_state["polls"] = vps_task_state.get("polls", 0) + 1
+                if vps_task_state["polls"] >= 2:
+                    vps_task_state["state"] = "done"
+            return httpx.Response(200, json={"id": int(m.group(2)),
+                                             "state": vps_task_state["state"],
+                                             "type": "rebootVm", "progress": 0,
+                                             "date": "2026-10-04T12:00:00+02:00"})
+        if path.endswith("/tasks"):
+            return httpx.Response(200, json=[900001])
+        if "/vps/" in path and request.method == "POST":
+            verb = path.rsplit("/", 1)[-1]
+            # reboot: todo on first POST so polling observes the transition;
+            # stop: error (task failure path); start: done immediately
+            vps_task_state["state"] = {"reboot": "todo", "stop": "error",
+                                       "start": "done"}[verb]
+            task = dict(fixture("ovh/vps_task.json"))
+            task["state"] = vps_task_state["state"]
+            task["type"] = {"reboot": "rebootVm", "stop": "stopVm",
+                            "start": "startVm"}[verb]
+            return httpx.Response(200, json=task)
+        if re.match(r"^/vps/[^/]+/ips/[^/]+$", path) and request.method == "GET":
+            return httpx.Response(200, json=fixture("ovh/vps_ip_detail.json"))
+        if "/serviceInfos" in path:
+            return httpx.Response(200, json=fixture("ovh/vps_service_infos.json"))
+        if path.endswith("/ips"):
+            return httpx.Response(200, json=fixture("ovh/vps_ips.json"))
+        m = re.match(r"^/vps/([^/]+)$", path)
+        if m:
+            sn = m.group(1)
+            if request.method == "PUT":
+                vps_renamed[sn] = json.loads(request.content)["displayName"]
+            row = dict(fixture("ovh/vps_service.json"))
+            row["name"] = sn
+            if sn in vps_renamed:
+                row["displayName"] = vps_renamed[sn]
+            return httpx.Response(200, json=row)
+        # -- Public Cloud ---------------------------------------------------
+        if path == "/cloud/project":
+            return httpx.Response(200, json=fixture("ovh/cloud_projects.json"))
+        if re.match(r"^/cloud/project/[^/]+/region/[^/]+/instance$", path):
+            return httpx.Response(200, json=fixture("ovh/cloud_region_instances.json"))
+        m = re.match(r"^/cloud/project/([^/]+)/instance/([0-9a-fA-F-]+)$", path)
+        if m:
+            project, iid = m.group(1), m.group(2)
+            if request.method == "DELETE":
+                cloud_deleted.add(iid)
+                return httpx.Response(200, json={})
+            if request.method == "PUT":
+                return httpx.Response(200, json={})
+            if iid in cloud_deleted:
+                return httpx.Response(404, json={"message": "no such instance"})
+            rows = fixture("ovh/cloud_instances.json")
+            row = next((r for r in rows if r["id"] == iid), None)
+            if row is None:
+                return httpx.Response(404, json={"message": "no such instance"})
+            row = dict(row)
+            if iid in cloud_status:
+                row["status"] = cloud_status[iid]
+            return httpx.Response(200, json=row)
+        if "/instance/" in path and request.method == "POST":
+            verb = path.rsplit("/", 1)[-1]
+            iid = path.split("/instance/")[1].split("/")[0]
+            cloud_status[iid] = "SHUTOFF" if verb == "stop" else "ACTIVE"
+            return httpx.Response(200, json={})
+        if re.match(r"^/cloud/project/[^/]+/instance$", path):
+            return httpx.Response(200, json=fixture("ovh/cloud_instances.json"))
+        return httpx.Response(404, json={"message": f"no fixture for {path}"})
+
+    return httpx.MockTransport(handler), calls, headers
+
+
 class FakeAdapter:
     """Test double implementing the read + action surface for the API smoke
     test. Not a shipped abstraction - lives only in conftest."""

@@ -1,0 +1,9 @@
+{
+  "ipAddress": "203.0.113.10",
+  "version": "v4",
+  "type": "primary",
+  "gateway": "203.0.113.1",
+  "reverse": "vps-demo1.demo.ovh.net.",
+  "geolocation": "FR",
+  "macAddress": null
+}

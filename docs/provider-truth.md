@@ -22,7 +22,7 @@ legacy workspace script disagrees with this file, this file wins.
   64); blocks /30-/24 7.96-509.44 EUR/mo. VPS constraint: individual IPs only,
   **max 16 per VPS**; blocks NOT supported on VPS (Additional IP page).
 - Monthly rental billing only (1/12/24-mo terms with degressive discounts);
-  no hourly VPS. Full OVH fleet adapter deferred: 3-part credentials (AK/AS/CK).
+  no hourly VPS.
 
 ### Gcore - LIVE catalog (tokenless)
 - `GET https://api.gcore.com/cloud/public/v1/regions` (33 regions) and
@@ -111,6 +111,106 @@ legacy workspace script disagrees with this file, this file wins.
   include tcp/udp/icmp/esp/gre; ports are strings like `"1024-5000"`.
 - **`GET /servers/{id}`** returns `{server: {...}}` - unwrap the envelope.
 
+## OVHcloud fleet: VPS + Public Cloud (verified 2026-10-04 against
+api.ovh.com/1.0/vps.json + api.ovh.com/1.0/cloud.json, fetched live; the
+identical eu.api.ovh.com spec was diffed for the VPS section; docs.ovhcloud.com
+auth guides; ovhcloud.com public-cloud pricing page)
+
+### Auth (both schemes supported; credential is a packed single string)
+
+- **Classic API keys (AK:AS:CK)**: signature `"$1$" + SHA1_HEX(
+  AS + "+" + CK + "+" + METHOD + "+" + URL + "+" + BODY + "+" + TIMESTAMP)`
+  [docs.ovhcloud.com/en/guides/manage-and-operate/api/first-steps; python-ovh
+  client]. Timestamp = SERVER time from `GET /1.0/auth/time` (sync a delta
+  once; OVH tolerates ~30s). Headers: `X-Ovh-Application`, `X-Ovh-Consumer`,
+  `X-Ovh-Timestamp`, `X-Ovh-Signature`. Hash the wire bytes actually sent -
+  httpx re-serialization and the compact separators in OVH's examples are
+  equivalent for this digest; hashing the sent bytes is the invariant that
+  matters. Keys created at www.ovh.com/auth/api/createToken (or Control Panel
+  "API keys"); `accessRules` are per method+path, e.g. `GET /cloud/project*`.
+- **OAuth2 service account (client_id:client_secret)**: `POST
+  https://www.ovh.com/auth/oauth2/token` with
+  `grant_type=client_credentials&scope=all` -> `{access_token, expires_in:
+  3599}`; then `Authorization: Bearer` on eu.api.ovh.com [docs.ovhcloud.com
+  guides: authenticate-api-with-service-account, manage-service-account].
+  Service accounts need an IAM policy attached (rights live on the policy,
+  not the client).
+- Rate limits on the /1.0 branch: **not documented anywhere official**. The
+  429 backoff ladder in http.py covers it.
+
+### VPS (`/vps`, the fixed-price product - unmetered)
+
+- `GET /vps` returns `string[]` (serviceNames, e.g. `vps-xxxx.vps.ovh.net`);
+  N+1 `GET /vps/{sn}` per VPS; **no pagination** on the /1.0 branch.
+- VPS object: `name` (=serviceName, readOnly), `displayName` (**writable,
+  max 50** - the rename path, via `PUT /vps/{sn}`), `state`, `zone`,
+  `zoneType`, `offerType`, `model`, `vcore`, `memoryLimit`, `netbootMode`
+  (local|rescue), `lockStatus{locked, reason}`, `iam{tags}`.
+- State enum (exact): `backuping, installing, maintenance, rebooting,
+  rescued, running, stopped, stopping, upgrading`. No "starting" state.
+- `model` = `{name, offer, vcore, memory, disk, datacenter[],
+  maximumAdditionnlIp, availableOptions, version}` - **bare longs with NO
+  units stated in the spec** (memory/disk). Never render "GB" the API didn't
+  state. No bandwidth field (per-disk `bandwidthLimit` is storage, not
+  network).
+- **NO traffic/bandwidth/price/labels in the VPS API at all** (unmetered
+  product; unlimited-traffic marketing with per-model caps 500 Mbps-3 Gbps
+  that the API doesn't expose). iam.tags are IAM-computed, not free-form
+  labels. Money: not even a planCode on the service - prices live only in
+  the separate /order API (see the catalog section above).
+- Created/renewal: `GET /vps/{sn}/serviceInfos` (services.Service: creation,
+  expiration, engagedUpTo, renewalType). IPs: `GET /vps/{sn}/ips` ->
+  strings; `GET /vps/{sn}/ips/{ip}` -> `{ipAddress, version (v4|v6), type
+  (primary|additional)}`.
+- Actions: `POST /vps/{sn}/start|stop|reboot` (no body) -> a `vps.Task`
+  synchronously: `{id, date, state, type, progress}`. Task state enum:
+  `todo, doing, done, error, blocked, cancelled, paused, waitingAck` -
+  poll `GET /vps/{sn}/tasks/{id}` until done. **progress is a bare long
+  with no declared unit - never render it as a percentage.**
+- `POST /vps/{sn}/rebuild` is **BETA** (the old /reinstall is deprecated,
+  deletion 2026-10-15) - not implemented in the panel.
+- **Delete is a deliberate two-step**: terminate + confirmTermination (with
+  reason + commentary). Not automated: the panel refuses with a pointer to
+  the OVH manager.
+- `GET /vps/{sn}/status` (IP service-probe) and `GET /vps/{sn}/models` are
+  DEPRECATED (deletion 2026-10-15) - not used.
+
+### Public Cloud (`/cloud/project`)
+
+- `GET /cloud/project` -> `string[]` serviceNames. `GET
+  /cloud/project/{sn}/instance` -> Instance[] (**no pagination**): `id`
+  (uuid), `name`, `region`, `status`, `flavorId`+`flavor` (name, vcpus, ram -
+  **Gio per the spec's description - citable**; disk is "number of disks"),
+  `ipAddresses[{ip, version, type}]`, **`currentMonthOutgoingTraffic` (long,
+  BYTES - "instance outgoing network traffic for the current month")**,
+  `monthlyBilling{since, status}`, `created`, `operationIds`.
+- Status enum (exact, 29 values): ACTIVE, BUILD, BUILDING, DELETED,
+  DELETING, ERROR, HARD_REBOOT, MIGRATING, PASSWORD, PAUSED, REBOOT,
+  REBUILD, RESCUE, RESCUED, RESCUING, RESIZE, RESIZED, RESUMING,
+  REVERT_RESIZE, SHELVED, SHELVED_OFFLOADED, SHELVING, SHUTOFF,
+  SNAPSHOTTING, SOFT_DELETED, STOPPED, SUSPENDED, UNKNOWN, UNSHELVING,
+  VERIFY_RESIZE.
+- **Traffic: egress included in all locations EXCEPT Singapore (SGP1) and
+  Sydney (SYD1), where 1 TB/month of outbound public traffic is included
+  per Public Cloud PROJECT** (pricing page, "Public Traffic Instance"
+  section); beyond that, per-GB charges apply. Inbound is always included.
+  The API exposes only the running per-instance cumulative
+  (currentMonthOutgoingTraffic) - no daily history, no per-instance overage
+  price, no per-instance quota number (the 1 TB is per project, so
+  included_bytes at the instance level is not-exposed).
+- Price: **NOT on the instance or flavor objects**. Only via the regional
+  listing `GET /cloud/project/{sn}/region/{regionName}/instance` ->
+  InstanceList[] rows carrying `pricings[]` (`{price: {value,
+  currencyCode, includeVat}, type: hour|month|licence|...}`), joined by
+  instance id. An hourly-billed instance must NOT get a monthly price (never
+  hourly x 730 - invented); monthly price attaches only when the instance
+  reports active monthly billing.
+- Actions return **void** (no task id): `POST .../instance/{id}/start|stop
+  (graceful)|reboot` (reboot body `{type: "soft"}`), `DELETE
+  .../instance/{id}`, rename = `PUT .../instance/{id}` `{"instanceName": ...}`.
+  Confirm by polling the instance status (want ACTIVE for start/reboot,
+  SHUTOFF for stop; DELETE confirmed by 404/DELETED on re-GET).
+
 ## LeaseWeb Public Cloud (developer.leaseweb.com + LeaseWeb KB)
 
 - **Resource**: `GET /publicCloud/v1/instances` (the legacy `/vps` product has
@@ -178,3 +278,6 @@ legacy workspace script disagrees with this file, this file wins.
 - leaseweb: DELETE passes reasonCode for monthly contracts (was: 400 error)
 - leaseweb: per-instance monthly price via /instanceTypes (removed from not_exposed)
 - leaseweb: contract.dataTraffic dropped (only exists on legacy /vps)
+- ovh: fleet adapter (VPS + Public Cloud) on the verified facts above; the
+  packed-credential format (AK:AS:CK / client_id:client_secret) replaces the
+  deferred "3-part credentials" blocker

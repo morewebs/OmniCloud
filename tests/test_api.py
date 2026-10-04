@@ -162,9 +162,10 @@ def test_adapters_lists_fleet_and_catalog_providers(client):
         assert keys[key]["source"] == "live"
     for key in ("netlen", "lightnode"):
         assert keys[key]["source"] == "seeded"
-    # no credential can be created for a catalog-only provider
+    # no credential can be created for a catalog-only provider (ovh is now
+    # a full fleet adapter - gcore remains catalog-only)
     r = client.post("/api/accounts", headers=HDRS,
-                    json={"adapter": "ovh", "name": "x", "token": TEST_TOKEN})
+                    json={"adapter": "gcore", "name": "x", "token": TEST_TOKEN})
     assert r.status_code == 400
 
 

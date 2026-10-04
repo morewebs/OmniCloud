@@ -1,0 +1,72 @@
+[
+  {
+    "id": "22222222-1111-1111-1111-111111111111",
+    "name": "app-demo-01",
+    "region": "GRA9",
+    "availabilityZone": "gra9-a",
+    "created": "2026-09-01T10:15:00+02:00",
+    "status": "ACTIVE",
+    "flavorId": "33333333-1111-1111-1111-111111111111",
+    "flavor": {
+      "id": "33333333-1111-1111-1111-111111111111",
+      "name": "d2-4",
+      "region": "GRA9",
+      "osType": "linux",
+      "type": "standard",
+      "available": true,
+      "quota": 0,
+      "vcpus": 4,
+      "ram": 8,
+      "disk": 1,
+      "inboundBandwidth": 512,
+      "outboundBandwidth": 512,
+      "capabilities": [],
+      "planCodes": {"hourly": " Flavor.Monthly.d2-4", "monthly": "Flavor.Monthly.d2-4"}
+    },
+    "imageId": "44444444-1111-1111-1111-111111111111",
+    "ipAddresses": [
+      {"ip": "203.0.113.20", "gatewayIp": "203.0.113.1", "networkId": 1, "type": "public", "version": 4}
+    ],
+    "currentMonthOutgoingTraffic": 412345678901,
+    "monthlyBilling": {"since": "2026-09-01T10:20:00+02:00", "status": "ok"},
+    "operationIds": [],
+    "planCode": "",
+    "sshKeyId": null,
+    "rescuePassword": null
+  },
+  {
+    "id": "22222222-2222-2222-2222-222222222222",
+    "name": "batch-demo-02",
+    "region": "GRA9",
+    "availabilityZone": "gra9-a",
+    "created": "2026-09-20T08:00:00+02:00",
+    "status": "SHUTOFF",
+    "flavorId": "33333333-2222-2222-2222-222222222222",
+    "flavor": {
+      "id": "33333333-2222-2222-2222-222222222222",
+      "name": "d2-2",
+      "region": "GRA9",
+      "osType": "linux",
+      "type": "standard",
+      "available": true,
+      "quota": 0,
+      "vcpus": 2,
+      "ram": 4,
+      "disk": 1,
+      "inboundBandwidth": 512,
+      "outboundBandwidth": 512,
+      "capabilities": [],
+      "planCodes": {"hourly": "Flavor.Hour.d2-2", "monthly": "Flavor.Month.d2-2"}
+    },
+    "imageId": "44444444-2222-2222-2222-222222222222",
+    "ipAddresses": [
+      {"ip": "203.0.113.21", "gatewayIp": "203.0.113.1", "networkId": 1, "type": "public", "version": 4}
+    ],
+    "currentMonthOutgoingTraffic": 0,
+    "monthlyBilling": {"since": "2026-09-20T08:05:00+02:00", "status": "activationPending"},
+    "operationIds": [],
+    "planCode": "",
+    "sshKeyId": null,
+    "rescuePassword": null
+  }
+]

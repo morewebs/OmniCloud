@@ -1,24 +1,450 @@
-"""OVHcloud catalog adapter - LIVE, tokenless (verified 2026-10-03).
+"""OVHcloud adapters: fleet (VPS + Public Cloud) and tokenless catalog.
 
-Source: https://eu.api.ovh.com/1.0/order/catalog/public/vps?ovhSubsidiary=FR
-(noAuthentication: true per /1.0/order.json; verified by plain curl).
-- 198 plans for FR: planCode, invoiceName, pricings[] (price in MICRO-CENTS,
-  e.g. 299000000 = 2.99 EUR), configurations[] with vps_datacenter values.
-- NO traffic field anywhere in the API - marketing pages say "unlimited
-  traffic" with per-model bandwidth caps; we publish that as plain text
-  (included_bytes stays None - never invent a number).
-- Extra IPs live in the SEPARATE tokenless IP catalog
-  /order/catalog/formatted/ip: ip-failover-ripe/arin at 1.99 EUR/IP/mo
-  (max 16 per VPS per the Additional IP page; blocks not supported on VPS).
-- Monthly rental billing only (1/12/24-month terms); no hourly VPS pricing.
+Fleet semantics verified 2026-10-04 against api.ovh.com/1.0/vps.json +
+/1.0/cloud.json (fetched live) - see docs/provider-truth.md, "OVHcloud
+fleet" section. Catalog semantics verified 2026-10-03 (section below).
+
+Auth: the credential is ONE packed string (the panel's credential chain is
+single-token end to end):
+- "AK:AS:CK" (3 parts)  -> classic API keys, SHA1 request signing
+- "client_id:secret" (2 parts) -> OAuth2 service account, Bearer
+Signature: "$1$" + SHA1_HEX(AS + "+" + CK + "+" + METHOD + "+" + URL
++ "+" + BODY + "+" + TIMESTAMP); timestamp is SERVER time (GET /1.0/auth/time,
+delta cached for the adapter's life). Hash the wire bytes actually sent.
 """
 from __future__ import annotations
 
+import asyncio
+import hashlib
+import time
+from datetime import datetime, timezone
 from decimal import Decimal
+from typing import Any
 
 import httpx
 
-from .base import IpOffer, Money, Plan, ProviderAdapter
+from . import http as phttp
+from .base import (
+    ActionTimeout, ActionResult, AdapterError, Allowance, Capability,
+    Facet, IpOffer, Money, Plan, ProviderAdapter, Server, ServerStatus,
+    TrafficCounting,
+)
+
+API = "https://eu.api.ovh.com/1.0"
+AUTH_TIME_URL = f"{API}/auth/time"
+OAUTH_TOKEN_URL = "https://www.ovh.com/auth/oauth2/token"
+
+# Poll budgets (seconds); timeout = failed, never "done".
+POLL_BUDGET_POWER = 120
+POLL_BUDGET_RENAME = 30
+POLL_BUDGET_DELETE = 60
+POLL_INTERVAL = 2.0
+
+# VPS state enum (vps.VpsStateEnum) -> canonical.
+VPS_STATE_MAP = {
+    "running": ServerStatus.RUNNING,
+    "stopped": ServerStatus.OFF,
+    "stopping": ServerStatus.UNKNOWN,
+    "rebooting": ServerStatus.UNKNOWN,
+    "backuping": ServerStatus.UNKNOWN,
+    "installing": ServerStatus.REBUILDING,
+    "upgrading": ServerStatus.REBUILDING,
+    "rescued": ServerStatus.UNKNOWN,
+    "maintenance": ServerStatus.UNKNOWN,
+}
+
+# Public Cloud instance status (cloud.instance.InstanceStatusEnum) -> canonical.
+CLOUD_STATUS_MAP = {
+    "ACTIVE": ServerStatus.RUNNING,
+    "SHUTOFF": ServerStatus.OFF,
+    "STOPPED": ServerStatus.OFF,
+    "BUILD": ServerStatus.REBUILDING,
+    "BUILDING": ServerStatus.REBUILDING,
+    "REBUILD": ServerStatus.REBUILDING,
+    "DELETED": ServerStatus.OFF,
+    "DELETING": ServerStatus.OFF,
+}
+
+# VPS task terminal outcomes (vps.TaskStateEnum): todo/doing are pending;
+# everything terminal except done is a failure.
+_TASK_FAILED = {"error", "blocked", "cancelled"}
+_TASK_PENDING = {"todo", "doing", "paused", "waitingAck"}
+
+# Module-level price cache shared by all OVH account instances:
+# (project, region) -> {instanceId: monthly Money}
+_region_pricings: dict[tuple[float, dict]] | None = None
+REGION_PRICINGS_TTL = 24 * 3600
+
+# Egress included in all regions except Singapore/Sydney (1 TB per PROJECT
+# there) - pricing page "Public Traffic Instance". No per-instance quota
+# number exists, so included_bytes is never a number.
+CLOUD_WINDOW = ("outgoing (egress) traffic, current calendar month; "
+                "egress included in all regions except Singapore/Sydney, "
+                "where 1 TB is included per project")
+
+CAPABILITIES = frozenset({
+    Capability.POWER_ON, Capability.POWER_OFF, Capability.REBOOT,
+    Capability.SHUTDOWN, Capability.RENAME, Capability.DELETE,
+})
+
+
+class OvhAdapter(ProviderAdapter):
+    """Fleet adapter: OVH VPS + Public Cloud instances under one account.
+
+    provider_id is compound and self-routing (a bare cloud uuid cannot say
+    which project owns it): "vps:{serviceName}" / "cloud:{project}:{uuid}".
+    """
+    key = "ovh"
+    display_name = "OVHcloud"
+    capabilities = CAPABILITIES
+
+    def __init__(self, account_id: int, account_name: str, token: str, http=None):
+        super().__init__(account_id, account_name, token, http)
+        parts = token.split(":")
+        if len(parts) == 3:
+            self._ak, self._as, self._ck = parts  # classic API keys
+            self._oauth = None
+        elif len(parts) == 2:
+            self._ak = None
+            self._oauth = tuple(parts)  # client_id:client_secret
+        else:
+            raise AdapterError(
+                "OVH credential must be 'application_key:application_secret:"
+                "consumer_key' (API keys) or 'client_id:client_secret' "
+                "(OAuth2 service account)")
+        # Bootstrap client: auth/time + token endpoint must NOT be signed/Bearer'd
+        self._raw = httpx.AsyncClient(timeout=phttp.TIMEOUT_S, transport=http)
+        self._time_delta: int | None = None
+        self._bearer: str | None = None
+        self._bearer_expires: float = 0.0
+        self._bearer_lock = asyncio.Lock()
+        self.h = phttp.ProviderHttpClient(API, self._auth, transport=http)
+
+    # -- auth ------------------------------------------------------------
+
+    def _auth(self, req: httpx.Request) -> None:
+        """Sync auth callable (http.py calls it per request, per retry):
+        classic computes a fresh SHA1 signature; OAuth2 reads the cached
+        bearer (refresh happens in the async _ensure_auth preamble)."""
+        if self._oauth is not None:
+            if self._bearer:
+                req.headers["Authorization"] = f"Bearer {self._bearer}"
+            return
+        ts = str(int(time.time() + (self._time_delta or 0)))
+        body = req.content.decode("utf-8", "replace") if req.content else ""
+        digest = "$1$" + hashlib.sha1(
+            f"{self._as}+{self._ck}+{req.method}+{str(req.url)}+{body}+{ts}"
+            .encode()).hexdigest()
+        req.headers.update({
+            "X-Ovh-Application": self._ak,
+            "X-Ovh-Consumer": self._ck,
+            "X-Ovh-Timestamp": ts,
+            "X-Ovh-Signature": digest,
+        })
+
+    async def _ensure_auth(self) -> None:
+        """Async preamble (called at the top of every fleet entry point):
+        classic syncs the server-time delta once; OAuth2 refreshes the
+        bearer near expiry (60s margin, under a lock - the sync loop and
+        an occasional run_action can overlap)."""
+        if self._oauth is not None:
+            if self._bearer and time.monotonic() < self._bearer_expires:
+                return
+            async with self._bearer_lock:
+                if self._bearer and time.monotonic() < self._bearer_expires:
+                    return
+                cid, secret = self._oauth
+                r = await self._raw.post(OAUTH_TOKEN_URL, data={
+                    "grant_type": "client_credentials",
+                    "client_id": cid, "client_secret": secret, "scope": "all",
+                })
+                if r.status_code != 200:
+                    raise AdapterError(f"OVH OAuth2 token request failed: "
+                                       f"{r.status_code}")
+                data = r.json()
+                self._bearer = data["access_token"]
+                self._bearer_expires = time.monotonic() + data.get("expires_in", 3599) - 60
+            return
+        if self._time_delta is None:
+            r = await self._raw.get(AUTH_TIME_URL)
+            if r.status_code != 200:
+                raise AdapterError(f"OVH /auth/time failed: {r.status_code}")
+            self._time_delta = int(r.json()) - int(time.time())
+
+    # -- reads -----------------------------------------------------------
+
+    async def list_servers(self) -> list[Server]:
+        await self._ensure_auth()
+        servers = []
+        # VPS: one list + N+1 per service (no pagination on /1.0)
+        for sn in await self.h.get_json("/vps"):
+            servers.append(await self._vps_server(sn))
+        # Public Cloud: one project list + instances per project
+        for project in await self.h.get_json("/cloud/project"):
+            rows = await self.h.get_json(f"/cloud/project/{project}/instance")
+            for row in rows:
+                servers.append(await self._cloud_server(project, row))
+        return servers
+
+    async def get_server(self, provider_id: str) -> Server:
+        await self._ensure_auth()
+        if provider_id.startswith("vps:"):
+            return await self._vps_server(provider_id[4:])
+        if provider_id.startswith("cloud:"):
+            _, project, instance_id = provider_id.split(":", 2)
+            row = await self.h.get_json(
+                f"/cloud/project/{project}/instance/{instance_id}")
+            return await self._cloud_server(project, row)
+        raise AdapterError(f"unknown OVH provider_id: {provider_id}")
+
+    async def _vps_server(self, sn: str) -> Server:
+        row = await self.h.get_json(f"/vps/{sn}")
+        infos = await self.h.get_json(f"/vps/{sn}/serviceInfos")
+        ipv4 = None
+        for ip in await self.h.get_json(f"/vps/{sn}/ips"):
+            detail = await self.h.get_json(f"/vps/{sn}/ips/{ip}")
+            if detail.get("version") == "v4":
+                ipv4 = detail["ipAddress"]
+                break
+        model = row.get("model") or {}
+        facets = [
+            Facet(label="product", value="vps"),
+            Facet(label="offer", value=str(row.get("offerType") or "?")),
+        ]
+        if model.get("name"):
+            facets.append(Facet(label="model", value=str(model["name"])))
+        # vcore is a raw count; memory/disk are bare longs with NO unit
+        # stated in the spec - rendered, never "GB" the API didn't say.
+        if model.get("vcore") is not None:
+            facets.append(Facet(label="vcore", value=str(model["vcore"])))
+        lock = (row.get("lockStatus") or {}).get("locked")
+        if lock:
+            reason = (row.get("lockStatus") or {}).get("reason") or "?"
+            facets.append(Facet(label="lock", value=str(reason)))
+        return Server(
+            provider_id=f"vps:{row['name']}",
+            name=row.get("displayName") or row["name"],
+            adapter=self.key,
+            account_id=self.account_id,
+            status=VPS_STATE_MAP.get(row.get("state"), ServerStatus.UNKNOWN),
+            ipv4=ipv4,
+            region=row.get("zone"),
+            server_type=str(model.get("name") or row.get("offerType") or ""),
+            created=_dt(infos.get("creation")),
+            labels=None,  # only IAM tags exist (computed, not free-form)
+            monthly_price=None,  # the /vps API carries no price at all
+            allowance=None,      # unmetered product - no usage endpoint
+            facets=facets,
+            not_exposed=["traffic usage", "price", "labels"],
+        )
+
+    async def _cloud_server(self, project: str, row: dict) -> Server:
+        sid = str(row["id"])
+        region = row.get("region")
+        flavor = row.get("flavor") or {}
+        price = None
+        if (row.get("monthlyBilling") or {}).get("status") == "ok":
+            price = await self._monthly_price(project, region, sid)
+        facets = [
+            Facet(label="product", value="public cloud"),
+            Facet(label="project", value=project),
+        ]
+        if flavor.get("name"):
+            facets.append(Facet(label="flavor", value=str(flavor["name"])))
+        if flavor.get("vcpus") is not None:
+            facets.append(Facet(label="vcore", value=str(flavor["vcpus"])))
+        # ram's spec description says Gio - citable, unlike the VPS model
+        if flavor.get("ram") is not None:
+            facets.append(Facet(label="ram", value=f"{flavor['ram']} Gio"))
+        monthly_billing = row.get("monthlyBilling") or {}
+        if monthly_billing.get("status") == "ok":
+            facets.append(Facet(label="billing", value="monthly"))
+        elif monthly_billing:
+            facets.append(Facet(label="billing", value="hourly"))
+        ipv4 = None
+        for ip in row.get("ipAddresses") or []:
+            if ip.get("version") == 4 and not ipv4:
+                ipv4 = ip.get("ip")
+        allowance = None
+        used = row.get("currentMonthOutgoingTraffic")
+        if used is not None:
+            allowance = Allowance(
+                included_bytes=None,  # 1 TB is per PROJECT (SGP1/SYD1 only)
+                used_bytes=int(used),
+                counting=TrafficCounting.OUTGOING_ONLY,
+                window=CLOUD_WINDOW,
+                reset_at=_next_month_utc(),
+            )
+        return Server(
+            provider_id=f"cloud:{project}:{sid}",
+            name=row.get("name", ""),
+            adapter=self.key,
+            account_id=self.account_id,
+            status=CLOUD_STATUS_MAP.get(row.get("status"), ServerStatus.UNKNOWN),
+            ipv4=ipv4,
+            region=region,
+            server_type=str(flavor.get("name") or row.get("flavorId") or ""),
+            created=_dt(row.get("created")),
+            labels=None,
+            monthly_price=price,
+            allowance=allowance,
+            facets=facets,
+            not_exposed=["labels", "overage price"],
+        )
+
+    async def _monthly_price(self, project: str, region: str | None,
+                             instance_id: str) -> Money | None:
+        """Regional listing is the ONLY price source (instance/flavor carry
+        none). Cached per (project, region), 24h - the leaseweb
+        /instanceTypes pattern. Only called for monthly-billed instances;
+        hourly instances keep monthly_price=None (never hourly x 730)."""
+        global _region_pricings
+        if region is None:
+            return None
+        cache = (_region_pricings or {}).get("t") or {}
+        ts = (_region_pricings or {}).get("ts", 0.0)
+        if _region_pricings is None or time.monotonic() - ts > REGION_PRICINGS_TTL:
+            cache = {}
+            _region_pricings = {"t": cache, "ts": time.monotonic()}
+        key = (project, region)
+        if key not in cache:
+            try:
+                rows = await self.h.get_json(
+                    f"/cloud/project/{project}/region/{region}/instance")
+            except AdapterError:
+                cache[key] = {}  # price unavailable = None, never a guess
+                return None
+            prices: dict[str, Money] = {}
+            for r in rows:
+                for pr in r.get("pricings") or []:
+                    if pr.get("type") == "month":
+                        p = (pr.get("price") or {})
+                        if p.get("value") is not None:
+                            prices[str(r.get("id"))] = Money(
+                                amount=Decimal(str(p["value"])),
+                                currency=p.get("currencyCode", "EUR"),
+                                vat_inclusive=p.get("includeVat"),
+                            )
+            cache[key] = prices
+        return cache.get(key, {}).get(instance_id)
+
+    # -- actions ----------------------------------------------------------
+
+    async def perform_action(self, cap: Capability, server_id: str,
+                             params: dict[str, Any]) -> ActionResult:
+        if cap not in self.capabilities:
+            raise AdapterError(f"ovh does not support {cap.value}")
+        # the VPS-delete refusal happens before ANY http call (not even
+        # the auth preamble) - a refusal must not touch the provider
+        if cap == Capability.DELETE and server_id.startswith("vps:"):
+            raise AdapterError(
+                "OVH VPS deletion is a deliberate two-step confirmation "
+                "(terminate + confirmTermination) in the OVH manager - "
+                "the panel does not automate it")
+        await self._ensure_auth()
+        if server_id.startswith("vps:"):
+            return await self._vps_action(cap, server_id[4:], params)
+        if server_id.startswith("cloud:"):
+            _, project, sid = server_id.split(":", 2)
+            return await self._cloud_action(cap, project, sid, params)
+        raise AdapterError(f"unknown OVH provider_id: {server_id}")
+
+    async def _vps_action(self, cap: Capability, sn: str,
+                          params: dict) -> ActionResult:
+        if cap == Capability.RENAME:
+            r = await self.h.put_json(f"/vps/{sn}", {"displayName": params["name"]})
+            row = r.json()
+            if row.get("displayName") != params["name"]:
+                raise AdapterError("rename not confirmed by provider view")
+            return ActionResult(detail="renamed")
+        # power family: POST start/stop/reboot -> vps.Task; poll to done.
+        verb = {Capability.POWER_ON: "start", Capability.POWER_OFF: "stop",
+                Capability.REBOOT: "reboot", Capability.SHUTDOWN: "stop"}[cap]
+        r = await self.h.post_json(f"/vps/{sn}/{verb}", {})
+        task = r.json()
+        return await self._poll_task(sn, int(task["id"]))
+
+    async def _poll_task(self, sn: str, task_id: int) -> ActionResult:
+        """Poll GET /vps/{sn}/tasks/{id} until the task's own state is
+        terminal. progress is a bare long with NO unit - never rendered."""
+        deadline = time.monotonic() + POLL_BUDGET_POWER
+        last = ""
+        while time.monotonic() < deadline:
+            t = await self.h.get_json(f"/vps/{sn}/tasks/{task_id}")
+            last = str(t.get("state", ""))
+            if last == "done":
+                return ActionResult(detail=f"task {task_id} done")
+            if last in _TASK_FAILED:
+                raise AdapterError(f"OVH task {task_id} {last}")
+            await asyncio.sleep(POLL_INTERVAL)
+        raise ActionTimeout(f"OVH task {task_id} (last state {last})")
+
+    async def _cloud_action(self, cap: Capability, project: str, sid: str,
+                            params: dict) -> ActionResult:
+        base = f"/cloud/project/{project}/instance/{sid}"
+        if cap == Capability.RENAME:
+            r = await self.h.put_json(base, {"instanceName": params["name"]})
+            # void-style PUT: confirm via the provider's own view
+            fresh = await self.h.get_json(base)
+            if fresh.get("name") != params["name"]:
+                raise AdapterError("rename not confirmed by provider view")
+            return ActionResult(detail="renamed")
+        if cap == Capability.DELETE:
+            await self.h.delete(base)  # void response - never success
+            deadline = time.monotonic() + POLL_BUDGET_DELETE
+            while time.monotonic() < deadline:
+                try:
+                    row = await self.h.get_json(base)
+                except AdapterError:
+                    return ActionResult(detail="deleted (instance gone)")
+                if str(row.get("status", "")).startswith("DELETED"):
+                    return ActionResult(detail="deleted")
+                await asyncio.sleep(POLL_INTERVAL)
+            raise ActionTimeout(f"OVH delete of instance {sid}")
+        # power family: void responses - poll the instance status
+        verb = {Capability.POWER_ON: "start", Capability.POWER_OFF: "stop",
+                Capability.REBOOT: "reboot", Capability.SHUTDOWN: "stop"}[cap]
+        body = {"type": "soft"} if verb == "reboot" else {}
+        await self.h.post_json(f"{base}/{verb}", body)
+        want = "ACTIVE" if verb in ("start", "reboot") else "SHUTOFF"
+        deadline = time.monotonic() + POLL_BUDGET_POWER
+        last = ""
+        while time.monotonic() < deadline:
+            row = await self.h.get_json(base)
+            last = str(row.get("status", ""))
+            if last == want:
+                return ActionResult(detail=f"status now {last}")
+            await asyncio.sleep(POLL_INTERVAL)
+        raise ActionTimeout(f"OVH {verb} on instance {sid} (last status {last})")
+
+    async def list_images(self) -> list[dict]:
+        # /api/catalog/images calls this when an enabled ovh account exists
+        # (ovh is in catalog.LIVE); no OVH images needed for the prototype
+        # order pipeline. An honest empty list, never an error.
+        return []
+
+    async def close(self) -> None:
+        await self.h.aclose()
+        await self._raw.aclose()
+
+
+def _dt(s: str | None) -> datetime | None:
+    if not s:
+        return None
+    try:
+        return datetime.fromisoformat(s.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def _next_month_utc() -> datetime:
+    now = datetime.now(timezone.utc)
+    if now.month == 12:
+        return now.replace(year=now.year + 1, month=1, day=1,
+                           hour=0, minute=0, second=0, microsecond=0)
+    return now.replace(month=now.month + 1, day=1,
+                       hour=0, minute=0, second=0, microsecond=0)
+
 
 CATALOG_URL = "https://eu.api.ovh.com/1.0/order/catalog/public/vps"
 IP_CATALOG_URL = "https://eu.api.ovh.com/1.0/order/catalog/formatted/ip"
@@ -32,8 +458,9 @@ BANDWIDTH_NOTE = "unlimited traffic (fair-use); public bandwidth 500 Mbps-3 Gbps
 
 
 class OvhCatalogAdapter(ProviderAdapter):
-    """Catalog-only: no server management in v2 (full adapter blocked on
-    OVH's 3-part credential model)."""
+    """Catalog-only: VPS order catalog (tokenless public endpoint). Fleet
+    management lives in OvhAdapter above (same key, both registries -
+    accounts.ADAPTERS uses the fleet class, catalog.LIVE this one)."""
     key = "ovh"
     display_name = "OVHcloud"
     capabilities = frozenset()

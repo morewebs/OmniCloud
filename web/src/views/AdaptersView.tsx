@@ -124,7 +124,7 @@ function CatalogSourceChip({ source }: { source: 'live' | 'seeded' }) {
 
 // Why each catalog-only provider isn't a fleet adapter (docs/provider-truth.md)
 const CATALOG_NOTES: Record<string, string> = {
-  ovh: 'Fleet management blocked on OVH\'s 3-part credentials (AK/AS/CK); plans come from the public order catalog.',
+  ovh: 'Fleet management (VPS + Public Cloud) is available — add an OVH credential in Credentials. Plans come from the public order catalog, no credential needed.',
   gcore: 'Plans from the public API; server management needs an API key.',
   tube: 'Plans from their pricing-page data asset; no public API.',
   netlen: 'API needs Bearer + IP allowlist; public list prices curated.',

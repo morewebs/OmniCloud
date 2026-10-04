@@ -101,9 +101,9 @@ export function CredentialsView() {
 
       {accounts.data!.length === 0 && (
         <Alert severity="info" icon={false}>
-          No provider accounts yet. Add one to import its fleet — Hetzner and
-          LeaseWeb adapters are ready; the other five providers feed the plan
-          catalog without credentials.
+          No provider accounts yet. Add one to import its fleet — Hetzner,
+          LeaseWeb and OVHcloud adapters are ready; the other four providers
+          feed the plan catalog without credentials.
         </Alert>
       )}
 
@@ -234,6 +234,15 @@ function AddAccountDialog({ adapters, onClose, onDone }: {
             <Alert severity="info" icon={false}>
               Create an API key at secure.leaseweb.com → API → API keys
               (read/write for full panel features).
+            </Alert>
+          )}
+          {effAdapter === 'ovh' && (
+            <Alert severity="info" icon={false}>
+              Paste your OVH credential as one string — API keys as
+              applicationKey:applicationSecret:consumerKey
+              (www.ovh.com/auth/api/createToken, rights on /cloud/project*
+              and /vps*), or an OAuth2 service account as
+              client_id:client_secret. Both cover VPS and Public Cloud.
             </Alert>
           )}
           <TextField label="Account name" value={name}

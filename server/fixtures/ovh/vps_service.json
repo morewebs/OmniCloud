@@ -1,0 +1,28 @@
+{
+  "name": "vps-demo1.demo.ovh.net",
+  "displayName": "web-demo-01",
+  "cluster": "cluster-demo01",
+  "state": "running",
+  "zone": "gra1",
+  "zoneType": "region",
+  "offerType": "ssd",
+  "model": {
+    "name": "vps-demo-value",
+    "offer": "vps-value",
+    "vcore": 2,
+    "memory": 4,
+    "disk": 40,
+    "datacenter": ["gra1"],
+    "maximumAdditionnlIp": 16,
+    "availableOptions": [],
+    "version": "2025v1"
+  },
+  "vcore": 2,
+  "memoryLimit": 4096,
+  "netbootMode": "local",
+  "keymap": null,
+  "lockStatus": {"locked": false, "reason": null},
+  "monitoringIpBlocks": [],
+  "slaMonitoring": null,
+  "iam": null
+}

@@ -10,7 +10,7 @@ ordered by what needs attention first — is anything down, what will this
 month cost — with technical depth one click down and a JSON API for
 scripts and tools.
 
-**Server management:** Hetzner Cloud, LeaseWeb.
+**Server management:** Hetzner Cloud, LeaseWeb, OVHcloud (VPS + Public Cloud).
 **Plan marketplace (7 providers):** Hetzner, LeaseWeb, OVHcloud, Gcore,
 Tube-hosting (live pricing from public APIs) + Netlen, LightNode (curated
 public list prices, stamped with source and last-verified date).
@@ -64,9 +64,10 @@ ever displayed).
 - **Sync** runs per account at a configurable interval; each source keeps its
   own timestamp and one broken account never blocks the others. Updates
   stream to the UI over SSE.
-- **Traffic semantics** are adapter-owned: Hetzner counts outgoing only,
-  LeaseWeb counts both directions. The panel displays each provider's
-  counting rule in plain language and never guesses a billing model.
+- **Traffic semantics** are adapter-owned: Hetzner, LeaseWeb and OVH
+  Public Cloud count outgoing traffic only; OVH VPS is unmetered. The panel
+  displays each provider's counting rule in plain language and never
+  guesses a billing model.
 - **Audit:** every mutation records who, when, what, and the before/after
   state.
 - **API access:** every route the UI uses is a JSON API. Personal tokens

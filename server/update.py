@@ -142,6 +142,10 @@ def _apply_sequence() -> None:
     """Pull -> deps -> SPA build, then exit for the supervisor restart."""
     import time
     for label, cmd in [
+        # checkout the lockfile first: a previous apply's npm install can
+        # reformat web/package-lock.json (npm version drift), and a dirty
+        # tree is exactly what makes the NEXT git pull --ff-only fail
+        ("restore lockfile", ["git", "checkout", "--", "web/package-lock.json"]),
         ("git pull", ["git", "pull", "--ff-only"]),
         ("uv sync", ["uv", "sync", "--frozen", "--no-dev"]),
         ("npm install", ["npm", "install", "--no-audit", "--no-fund"]),

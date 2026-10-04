@@ -78,9 +78,36 @@ restarts it on the new code. Configure the restart:
 - loop script: `while true; do uv run uvicorn server.main:app; [ $? -ne 78 ] && break; done`
   — or simply restart on any exit; 78 is just the documented handshake.
 
-**Docker installs update by rebuilding the image** — the container has no
-git or node, so the built-in apply is not for Docker (its update panel will
-say so):
+**Docker — self-updating container (updates from the web UI):** run the
+image with the host's git checkout bind-mounted at `/repo`:
+
+```bash
+git clone https://github.com/morewebs/OmniCloud.git && cd OmniCloud
+docker build -t omnicloud .
+docker run -d --name omnicloud -p 8000:8000 \
+  --restart unless-stopped \
+  -v "$(pwd):/repo" \
+  -v omnicloud-data:/data \
+  -e OMNICLOUD_MASTER_KEY=<key> \
+  omnicloud
+```
+
+Settings → Panel update works exactly like on a host install: apply runs
+`git pull` + `uv sync` + `npm build` **inside** the container, the process
+exits 78, and `--restart` reloads the new code. No docker socket is
+mounted; the container never talks to the Docker daemon. First boot seeds
+the bind mount with the image's prebuilt SPA; every later build happens
+in-container.
+
+Tradeoff to know: a self-updating container needs write access to its own
+code tree, so it runs as root (the checkout is owned by your host user and
+UID-mapping would break `git pull`). A container that can rewrite its own
+code is root-in-container by design — accept this mode only on a host you
+already trust with the panel (which holds your master key anyway).
+
+**Docker — plain image (updates by rebuilding):** without the `/repo`
+bind-mount the panel reports "updates by rebuilding the image" and the
+Apply button is absent:
 
 ```bash
 git pull

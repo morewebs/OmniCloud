@@ -30,9 +30,11 @@ API_URL = f"https://api.github.com/repos/{REPO}/releases/latest"
 EXIT_UPDATE = 78
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-# A Docker image COPYs the code in (no git checkout, no git binary) - the
-# one-click updater can never work there; deployments update by rebuilding
-# the image. Declared by the Dockerfile at build time.
+# Container installs that bind-mount a git checkout of the repo (DEPLOY.md
+# "self-updating container") CAN use the one-click updater - apply runs
+# git pull + uv sync + npm build inside the container and exits 78.
+# OMNICLOUD_CONTAINER=1 without a checkout (code COPY'd into the image)
+# can never git pull; those report "rebuild the image" and apply refuses.
 CONTAINER_INSTALL = os.environ.get("OMNICLOUD_CONTAINER", "") == "1"
 _status: dict = {"checked_at": None, "latest": None, "available": False,
                 "notes": None, "url": None, "error": None, "applying": False}
@@ -40,9 +42,21 @@ _status: dict = {"checked_at": None, "latest": None, "available": False,
 
 def status() -> dict:
     st = {**_status, "current": version.VERSION, "repo": REPO}
-    if CONTAINER_INSTALL:
+    if CONTAINER_INSTALL and not _has_checkout():
         st["update_method"] = "rebuild-image"
     return st
+
+
+def _has_checkout() -> bool:
+    """A real git checkout REPO_ROOT can update in place (bind-mounted repo
+    or a plain host install). COPY'd-into-image installs cannot."""
+    try:
+        import subprocess
+        r = subprocess.run(["git", "rev-parse", "--is-inside-work-tree"],
+                           cwd=REPO_ROOT, capture_output=True)
+        return r.returncode == 0
+    except FileNotFoundError:
+        return False
 
 
 async def check() -> dict:
@@ -86,7 +100,7 @@ async def apply() -> dict:
         raise RuntimeError("an update is already in progress")
     if not _status["available"]:
         raise RuntimeError("no newer version is known - check for updates first")
-    if CONTAINER_INSTALL:
+    if CONTAINER_INSTALL and not _has_checkout():
         raise RuntimeError("container installs update by rebuilding the image - "
                            "git pull inside the container is impossible (see DEPLOY.md)")
     if not REPO_ROOT.is_dir():

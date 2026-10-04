@@ -147,10 +147,13 @@ async def test_apply_missing_git_binary_is_friendly():
 
 async def test_apply_refused_in_container(monkeypatch):
     """A container install (code COPY'd in, no git checkout) can never git
-    pull - apply must refuse with the rebuild-image guidance, not a 500."""
+    pull - apply must refuse with the rebuild-image guidance, not a 500.
+    A self-updating container (checkout bind-mounted at /repo) is the
+    other branch: it applies like a host install."""
     from server import update
     update._status.update(available=True, latest="9.9.9", applying=False)
     monkeypatch.setattr(update, "CONTAINER_INSTALL", True)
+    monkeypatch.setattr(update, "_has_checkout", lambda: False)
     try:
         with pytest.raises(RuntimeError, match="rebuilding the image"):
             await update.apply()
@@ -160,9 +163,14 @@ async def test_apply_refused_in_container(monkeypatch):
 
 def test_container_status_declares_update_method(monkeypatch):
     """status() tells the UI how this install updates so it can hide the
-    doomed Apply button on Docker deployments."""
+    doomed Apply button on Docker deployments - but a self-updating
+    container (bind-mounted checkout) gets the normal updater UI."""
     from server import update
     monkeypatch.setattr(update, "CONTAINER_INSTALL", True)
+    monkeypatch.setattr(update, "_has_checkout", lambda: False)
     assert update.status()["update_method"] == "rebuild-image"
+    # bind-mounted checkout inside a container: full updater, no override
+    monkeypatch.setattr(update, "_has_checkout", lambda: True)
+    assert "update_method" not in update.status()
     monkeypatch.setattr(update, "CONTAINER_INSTALL", False)
     assert "update_method" not in update.status()

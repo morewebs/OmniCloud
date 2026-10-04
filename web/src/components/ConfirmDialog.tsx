@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import Alert from '@mui/material/Alert';
 import Button from '@mui/material/Button';
 import Dialog from '@mui/material/Dialog';
@@ -31,6 +31,9 @@ export function ConfirmDialog({
   children?: React.ReactNode;
 }) {
   const [typed, setTyped] = useState('');
+  // reset on every open: the typed-name gate must not carry over from a
+  // previous destructive action (second dialog would come pre-confirmed)
+  useEffect(() => { if (open) setTyped(''); }, [open]);
   const ready = !requireTyped || typed.trim() === serverName;
   const mismatch = requireTyped && typed.trim().length > 0 && !ready;
   const busyLabel = { 'Shut down': 'Shutting down…', Reboot: 'Rebooting…', Rebuild: 'Rebuilding…',

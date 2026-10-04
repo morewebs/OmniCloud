@@ -145,7 +145,8 @@ export function UsersView() {
         serverName={elevate?.username ?? ''}
         body={`Grant ${elevate?.username} full admin access: they can manage servers, order plans, and change every setting. This is a privilege escalation.`}
         confirmLabel="Make admin"
-        onConfirm={() => { if (elevate) mut(elevate, { role: 'admin' }, 'promoted to admin'); setElevate(null); }}
+        confirming={busyId === elevate?.id}
+        onConfirm={() => { if (elevate) void mut(elevate, { role: 'admin' }, 'promoted to admin').then(() => setElevate(null)); }}
         onClose={() => setElevate(null)}
       />
 
@@ -178,7 +179,7 @@ function AddUserDialog({ onClose, onDone }: { onClose: () => void; onDone: () =>
   };
 
   return (
-    <Dialog aria-labelledby="omni-dlg-177" open onClose={onClose} maxWidth="xs" fullWidth>
+    <Dialog aria-labelledby="omni-dlg-177" open onClose={busy ? undefined : onClose} maxWidth="xs" fullWidth>
       <DialogTitle id="omni-dlg-177">Add user</DialogTitle>
       <DialogContent>
         <Stack spacing={2} sx={{ pt: 1 }}>

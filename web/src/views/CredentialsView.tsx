@@ -172,7 +172,7 @@ export function CredentialsView() {
         body={`Remove ${removeAcct?.name} from the panel. Its cached servers and history are deleted; the provider account itself is untouched.`}
         confirmLabel="Remove"
         confirming={busyId === removeAcct?.id}
-        onConfirm={() => { if (removeAcct) doRemove(removeAcct); setRemoveAcct(null); }}
+        onConfirm={() => { if (removeAcct) void doRemove(removeAcct); }}
         onClose={() => setRemoveAcct(null)}
       />
 
@@ -213,7 +213,7 @@ function AddAccountDialog({ adapters, onClose, onDone }: {
   };
 
   return (
-    <Dialog aria-labelledby="omni-dlg-212" open onClose={onClose} maxWidth="xs" fullWidth>
+    <Dialog aria-labelledby="omni-dlg-212" open onClose={busy ? undefined : onClose} maxWidth="xs" fullWidth>
       <DialogTitle id="omni-dlg-212">Add provider account</DialogTitle>
       <DialogContent>
         <Stack spacing={2} sx={{ pt: 1 }}>

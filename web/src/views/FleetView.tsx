@@ -80,8 +80,16 @@ export function FleetView() {
       out = [...out].sort((a, b) => ((a.allowance?.used_bytes ?? 0)
         - (b.allowance?.used_bytes ?? 0)) * (sortDir === 'asc' ? 1 : -1));
     } else if (sortBy === 'monthly') {
-      const price = (s: Server) => s.monthly_price ? Number(s.monthly_price.amount) : -1;
-      out = [...out].sort((a, b) => (price(a) - price(b)) * (sortDir === 'asc' ? 1 : -1));
+      // unknown prices sort LAST ascending (never read as "cheapest/free")
+      const price = (s: Server) => s.monthly_price ? Number(s.monthly_price.amount) : null;
+      const dir = sortDir === 'asc' ? 1 : -1;
+      out = [...out].sort((a, b) => {
+        const pa = price(a), pb = price(b);
+        if (pa === null && pb === null) return 0;
+        if (pa === null) return 1;   // unknown always last in asc
+        if (pb === null) return -1;
+        return (pa - pb) * dir;
+      });
     }
     return out;
   }, [fleet.data, search, statusFilter, sortBy, sortDir]);

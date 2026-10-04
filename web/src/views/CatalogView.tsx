@@ -115,7 +115,10 @@ export function CatalogView() {
           <MenuItem value="all">All locations</MenuItem>
           {locations.map(l => <MenuItem key={l} value={l}>{l}</MenuItem>)}
         </TextField>
-        <TextField size="small" label="Max price/mo" value={maxPrice} className="num"
+        <TextField size="small"
+                   label={new Set(allPlans.map(p => p.price_monthly?.currency)).size > 1
+                     ? 'Max price/mo (per currency)' : 'Max price/mo'}
+                   value={maxPrice} className="num"
                    onChange={e => setMaxPrice(e.target.value)} sx={{ width: 100 }}
                    placeholder="any" />
         <TextField size="small" label="Min TB traffic" value={minTraffic} className="num"

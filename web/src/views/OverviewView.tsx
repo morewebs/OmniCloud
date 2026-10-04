@@ -195,7 +195,11 @@ export function OverviewView() {
               ? <BarChart
                   height={190}
                   xAxis={[{ data: adapters, scaleType: 'band' }]}
-                  series={spendSeries.map(s => ({ ...s, stack: 'total' }))}
+                  series={currencies.length > 1
+                    // mixed currencies: side-by-side bars, NEVER stacked
+                    // (a stack visually sums EUR + USD)
+                    ? spendSeries
+                    : spendSeries.map(s => ({ ...s, stack: 'total' }))}
                   slotProps={axisSlotProps}
                   hideLegend={currencies.length < 2}
                 />

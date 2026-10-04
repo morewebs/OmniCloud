@@ -8,10 +8,12 @@ from conftest import FakeAdapter
 
 
 def test_version_source_of_truth():
-    """server/version.py and pyproject.toml must never drift."""
+    """server/version.py, pyproject.toml and web/package.json must never drift."""
     from server import version
     text = open("pyproject.toml", encoding="utf-8").read()
     assert f'version = "{version.VERSION}"' in text
+    pkg = open("web/package.json", encoding="utf-8").read()
+    assert f'"version": "{version.VERSION}"' in pkg
 
 
 def test_is_newer_semver():

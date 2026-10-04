@@ -14,8 +14,8 @@ jobs:
         with:
           python-version: "3.12"
       - run: uv sync --all-groups
-      # the suite is network-guarded (a counting test fails on any outbound
-      # HTTP) - so run it with no network privileges beyond localhost
+      # the suite is network-guarded: a counting poison fails the run on
+      # any outbound HTTP, so this needs no extra network restriction
       - run: uv run pytest -q
 
   frontend:

@@ -94,7 +94,7 @@ data-honesty rules in design.md are enforced by the suite. MIT licensed.
 
 ```bash
 uv run pytest
-cd web && npx tsc --noEmit
+cd web && npx tsc -b
 ```
 
 Adapter tests run against recorded fixture JSON (no network). All fixture

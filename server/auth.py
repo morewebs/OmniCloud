@@ -1,7 +1,7 @@
 """Multi-user auth: scrypt password hashing, opaque sessions, roles.
 
 Roles: admin (mutates) / viewer (read-only). Session token: urlsafe random,
-sha256 hash stored in DB, HttpOnly SameSite=Strict cookie, sliding 30-day TTL.
+sha256 hash stored in DB, HttpOnly SameSite=Strict cookie, fixed 30-day TTL.
 CSRF: SameSite=Strict + required X-Requested-With header on non-GET /api
 (enforced in api.py middleware).
 """

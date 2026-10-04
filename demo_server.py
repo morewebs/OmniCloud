@@ -403,7 +403,7 @@ ROUTES = {
         {"id": 1, "name": "backup-script", "created_at": "2026-09-20T12:00:00+00:00",
          "last_used_at": "2026-10-04T06:00:00+00:00"},
     ],
-    "/api/update/status": {"current": "0.3.0", "latest": None, "repo": "morewebs/OmniCloud",
+    "/api/update/status": {"current": "0.4.0", "latest": None, "repo": "morewebs/OmniCloud",
                            "checked_at": "2026-10-03T09:00:00+00:00", "notes": None,
                            "url": None, "error": None, "applying": False},
     "/api/actions": [

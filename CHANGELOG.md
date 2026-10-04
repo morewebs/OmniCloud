@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.4.0 (2026-10-04)
 
 - **OVHcloud fleet adapter** (VPS + Public Cloud instances under one
   account): power actions, rename, cloud-instance delete — each confirmed

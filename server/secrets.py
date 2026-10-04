@@ -41,8 +41,3 @@ def decrypt(ciphertext: bytes) -> str:
     except InvalidToken:
         raise SecretsUnavailable("credential ciphertext does not match the current master key")
 
-
-def mask(token: str) -> str:
-    """Display form: dots + last 4. The reveal toggle expands metadata only;
-    the secret itself is never retrievable through the API."""
-    return "••••" + token[-4:]

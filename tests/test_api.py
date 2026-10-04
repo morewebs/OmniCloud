@@ -40,8 +40,10 @@ async def test_setup_then_full_flow(client):
     _admin(client)
     assert client.get("/api/auth/status").json()["needs_setup"] is False
 
-    # setup closes: a second setup attempt is rejected
-    r = client.post("/api/auth/setup", json={"username": "x", "password": "y"}, headers=HDRS)
+    # setup closes: a second setup attempt is rejected (valid password - the
+    # 403 is about setup being closed, not about password length)
+    r = client.post("/api/auth/setup",
+                    json={"username": "x", "password": "pw123456"}, headers=HDRS)
     assert r.status_code == 403
 
     # add account (token goes in once, never comes back out)
@@ -226,7 +228,7 @@ def test_capabilities_409_for_absent(client, monkeypatch):
     r = client.post("/api/accounts", headers=HDRS,
                     json={"adapter": "fake", "name": "a", "token": TEST_TOKEN})
     aid = r.json()["id"]
-    # FakeAdapter.capabilities is empty -> any action kind hits the 409 path
+    # FakeAdapter has reboot/rename/delete but not shutdown -> 409 path
     r = client.post(f"/api/servers/{aid}/fake-1/actions", headers=HDRS,
                     json={"kind": "firewall", "params": {}})
     # firewall has its own route; use rebuild via generic route

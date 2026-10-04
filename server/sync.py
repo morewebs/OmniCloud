@@ -127,7 +127,7 @@ async def _sync_loop(account_id: int) -> None:
         if not account or not account["enabled"]:
             return
         wake = _sync_events.get(account_id)
-        interval_min = accounts.interval_for(account_id, account["adapter"])
+        interval_min = accounts.interval_for(account_id)
         try:
             with db.connect() as conn:
                 conn.execute(

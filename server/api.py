@@ -175,7 +175,7 @@ def fleet(user: auth.User = Depends(auth.require_user)):
         sync_info[str(r["account_id"])] = {
             "last_success_at": r["last_success_at"],
             "last_error": r["last_error"],
-            "interval_minutes": accounts.interval_for(r["account_id"], ""),
+            "interval_minutes": accounts.interval_for(r["account_id"]),
         }
     return {
         "accounts": [
@@ -283,14 +283,14 @@ def get_accounts(user: auth.User = Depends(auth.require_user)):
 
 
 @router.post("/accounts")
-def create_account(body: AccountBody, _=Depends(auth.require_admin)):
+def create_account(body: AccountBody, admin: auth.User = Depends(auth.require_admin)):
     try:
         account_id = accounts.create_account(body.adapter, body.name, body.token, body.scope)
     except secrets.SecretsUnavailable as e:
         raise HTTPException(503, str(e))
     except ValueError as e:
         raise HTTPException(400, str(e))
-    audit.record(_.id, "account.create", f"{body.adapter}/{body.name}")
+    audit.record(admin.id, "account.create", f"{body.adapter}/{body.name}")
     sync.restart_account(account_id)
     return {"id": account_id}
 
@@ -364,8 +364,6 @@ async def run_action(account_id: int, provider_id: str, body: ActionBody,
         # 409: capability absent from this adapter - rendered as absent in UI,
         # this check is for direct API users.
         raise HTTPException(409, f"{account['adapter']} does not support {body.kind}")
-    import asyncio
-    asyncio.get_event_loop()  # ensure loop exists (TestClient thread)
     action_id = await sync.run_action(account_id, provider_id, body.kind,
                                       user.id, body.params)
     with db.connect() as conn:

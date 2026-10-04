@@ -94,7 +94,7 @@ def build_adapter(account: dict) -> ProviderAdapter:
     return cls(account["id"], account["name"], token)
 
 
-def interval_for(account_id: int, adapter_key: str = "") -> float:
+def interval_for(account_id: int) -> float:
     """Sync interval in minutes, from settings; the env default feeds the
     DB default (OMNICLOUD_SYNC_INTERVAL_MIN was previously dead config)."""
     default = db.get_setting("sync_default_interval") or str(config.DEFAULT_SYNC_INTERVAL_MIN)

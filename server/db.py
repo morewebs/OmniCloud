@@ -4,12 +4,10 @@ ponytail: no migrations - CREATE TABLE IF NOT EXISTS + schema_version row; real
 migration tool only when a schema change actually ships (v2).
 """
 import sqlite3
-import threading
+from contextlib import AbstractContextManager, closing, contextmanager
 from datetime import datetime, timezone
 
 from . import config
-
-_local = threading.local()
 
 SCHEMA_VERSION = 2
 
@@ -139,13 +137,25 @@ def now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
-def connect() -> sqlite3.Connection:
-    """A fresh connection with sane pragmas. Caller closes (or uses `with`)."""
-    conn = sqlite3.connect(config.DB_PATH, timeout=10)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA foreign_keys=ON")
-    return conn
+def connect() -> AbstractContextManager[sqlite3.Connection]:
+    """A fresh connection with sane pragmas. Use as a context manager - it
+    commits/rolls back AND closes (sqlite's plain `with` leaves the handle
+    open to GC)."""
+    @contextmanager
+    def _cm():
+        conn = sqlite3.connect(config.DB_PATH, timeout=10)
+        try:
+            conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA foreign_keys=ON")
+            yield conn
+            conn.commit()  # sqlite's own `with` did this; keep the semantics
+        except BaseException:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+    return _cm()
 
 
 def init() -> None:

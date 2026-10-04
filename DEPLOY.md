@@ -8,7 +8,7 @@ comfortably serves a small ops team over a 200+ server fleet.
 
 ```bash
 uv sync
-export OMNICLOUD_MASTER_KEY=$(python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())")
+export OMNICLOUD_MASTER_KEY=$(uv run python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())")
 cd web && npm install && npm run build && cd ..   # SPA into server/static/
 uv run uvicorn server.main:app --host 0.0.0.0 --port 8000
 ```
@@ -25,6 +25,8 @@ closes forever after).
 | `OMNICLOUD_SESSION_TTL_DAYS` | `30` | Session lifetime. |
 | `OMNICLOUD_SYNC_INTERVAL_MIN` | `5` | Default fleet sync interval (per-account override in Settings). |
 | `OMNICLOUD_COOKIE_SECURE` | `1` | Session cookie `Secure` flag. Set `0` **only** for plain-HTTP local dev; behind TLS keep `1`. |
+| `OMNICLOUD_UPDATE_REPO` | `morewebs/OmniCloud` | Repo the update panel checks (`owner/name`). |
+| `OMNICLOUD_TRUST_PROXY` | `0` | Set `1` behind a reverse proxy: rate-limit by `X-Forwarded-For` instead of the proxy IP. |
 
 ## Backups
 

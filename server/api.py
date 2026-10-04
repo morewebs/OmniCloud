@@ -6,7 +6,7 @@ import os
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from . import accounts, audit, auth, catalog, config, db, orders, secrets, sync, update, version
 from .adapters.base import Capability
@@ -42,7 +42,10 @@ def auth_status():
 
 @router.post("/auth/setup")
 def setup(body: SetupBody, response: Response):
-    uid = auth.create_first_admin(body.username, body.password)
+    try:
+        uid = auth.create_first_admin(body.username, body.password)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
     if uid is None:
         raise HTTPException(403, "setup is closed - an admin already exists")
     audit.record(uid, "user.create", f"user/{body.username}")
@@ -63,13 +66,30 @@ _MAX_FAILS, _LOCK_SECONDS = 5, 15 * 60
 
 
 def _login_key(body: LoginBody, request: Request) -> str:
-    ip = request.client.host if request.client else "?"
+    # behind a reverse proxy every client shares the proxy IP - honor
+    # X-Forwarded-For ONLY when the operator opted in (spoofable otherwise)
+    if os.environ.get("OMNICLOUD_TRUST_PROXY", "0") == "1":
+        ip = (request.headers.get("x-forwarded-for", "").split(",")[0].strip()
+              or (request.client.host if request.client else "?"))
+    else:
+        ip = request.client.host if request.client else "?"
     return f"{body.username}|{ip}"
+
+
+def _evict_expired() -> None:
+    """Failed attempts from distinct usernames never trigger the success-path
+    pop - evict expired entries so the dict can't grow unbounded."""
+    import time as _time
+    now = _time.time()
+    for k in [k for k, (_, locked_until) in _login_fails.items()
+              if locked_until and locked_until < now]:
+        _login_fails.pop(k, None)
 
 
 @router.post("/auth/login")
 def login(body: LoginBody, response: Response, request: Request):
     import time as _time
+    _evict_expired()
     key = _login_key(body, request)
     fails, locked_until = _login_fails.get(key, (0, 0.0))
     if _time.time() < locked_until:
@@ -110,6 +130,9 @@ def change_password(body: PasswordBody, response: Response,
                     user: auth.User = Depends(auth.require_user)):
     if not auth.verify_credentials(user.username, body.current_password):
         raise HTTPException(403, "current password is wrong")
+    if len(body.new_password) < auth.MIN_PASSWORD_LEN:
+        raise HTTPException(400, f"password must be at least "
+                                 f"{auth.MIN_PASSWORD_LEN} characters")
     with db.connect() as conn:
         conn.execute("UPDATE users SET password_hash=? WHERE id=?",
                      (auth.hash_password(body.new_password), user.id))
@@ -249,8 +272,8 @@ def billing_summary(user: auth.User = Depends(auth.require_user)):
 
 class AccountBody(BaseModel):
     adapter: str
-    name: str
-    token: str
+    name: str = Field(min_length=1)
+    token: str = Field(min_length=1)
     scope: str | None = None
 
 
@@ -382,6 +405,9 @@ async def attach_firewall(account_id: int, firewall_id: int, provider_id: str,
     account = accounts.get_account(account_id)
     if not account:
         raise HTTPException(404, "no such account")
+    adapter_cls = accounts.ADAPTERS.get(account["adapter"])
+    if not adapter_cls or Capability.FIREWALL not in adapter_cls.capabilities:
+        raise HTTPException(409, f"{account['adapter']} does not support firewall management")
     adapter = accounts.build_adapter(account)
     try:
         await adapter.attach_firewall(firewall_id, provider_id)
@@ -402,6 +428,9 @@ async def detach_firewall(account_id: int, firewall_id: int, provider_id: str,
     account = accounts.get_account(account_id)
     if not account:
         raise HTTPException(404, "no such account")
+    adapter_cls = accounts.ADAPTERS.get(account["adapter"])
+    if not adapter_cls or Capability.FIREWALL not in adapter_cls.capabilities:
+        raise HTTPException(409, f"{account['adapter']} does not support firewall management")
     adapter = accounts.build_adapter(account)
     try:
         await adapter.detach_firewall(firewall_id, provider_id)
@@ -658,7 +687,10 @@ def list_users(user: auth.User = Depends(auth.require_admin)):
 def create_user(body: UserBody, user: auth.User = Depends(auth.require_admin)):
     if body.role not in ("admin", "viewer"):
         raise HTTPException(400, "role must be admin or viewer")
-    uid = auth.create_user(body.username, body.password, body.role)
+    try:
+        uid = auth.create_user(body.username, body.password, body.role)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
     audit.record(user.id, "user.create", f"user/{body.username}")
     return {"id": uid}
 
@@ -682,6 +714,9 @@ def patch_user(user_id: int, body: UserPatch, user: auth.User = Depends(auth.req
         if body.disabled is not None:
             conn.execute("UPDATE users SET disabled=? WHERE id=?", (int(body.disabled), user_id))
         if body.password is not None:
+            if len(body.password) < auth.MIN_PASSWORD_LEN:
+                raise HTTPException(400, f"password must be at least "
+                                         f"{auth.MIN_PASSWORD_LEN} characters")
             conn.execute("UPDATE users SET password_hash=? WHERE id=?",
                          (auth.hash_password(body.password), user_id))
     if body.disabled or body.password is not None:

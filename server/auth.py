@@ -54,7 +54,12 @@ class User:
     disabled: bool
 
 
+MIN_PASSWORD_LEN = 8
+
+
 def create_user(username: str, password: str, role: str = "viewer") -> int:
+    if len(password) < MIN_PASSWORD_LEN:
+        raise ValueError(f"password must be at least {MIN_PASSWORD_LEN} characters")
     with db.connect() as conn:
         cur = conn.execute(
             "INSERT INTO users(username, password_hash, role, created_at) VALUES(?,?,?,?)",
@@ -133,6 +138,8 @@ def revoke_sessions(user_id: int) -> None:
 def create_first_admin(username: str, password: str) -> int | None:
     """TOCTOU-safe first-user creation: the guard is IN the INSERT's WHERE,
     so two concurrent setups cannot both win."""
+    if len(password) < MIN_PASSWORD_LEN:
+        raise ValueError(f"password must be at least {MIN_PASSWORD_LEN} characters")
     with db.connect() as conn:
         cur = conn.execute(
             "INSERT INTO users(username, password_hash, role, created_at) "

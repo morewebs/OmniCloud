@@ -17,7 +17,7 @@ public list prices, stamped with source and last-verified date).
 ```bash
 # backend (Python 3.12+, uv)
 uv sync
-export OMNICLOUD_MASTER_KEY=$(python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())")
+export OMNICLOUD_MASTER_KEY=$(uv run python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())")
 uv run uvicorn server.main:app --port 8000
 
 # frontend dev server (separate terminal)
@@ -69,6 +69,8 @@ ever displayed).
 | `OMNICLOUD_SESSION_TTL_DAYS` | Session lifetime | 30 |
 | `OMNICLOUD_SYNC_INTERVAL_MIN` | Default sync interval (minutes) | 5 |
 | `OMNICLOUD_COOKIE_SECURE` | Secure session cookie flag (`0` for local HTTP dev only) | `1` |
+| `OMNICLOUD_UPDATE_REPO` | Repo checked for panel updates (`owner/name`) | `morewebs/OmniCloud` |
+| `OMNICLOUD_TRUST_PROXY` | Rate-limit by `X-Forwarded-For` when behind a reverse proxy | `0` |
 
 **Production:** see [DEPLOY.md](DEPLOY.md) — TLS, backups (DB + master key
 together), reverse proxy (SSE unbuffered, ≥960s read timeout for long server

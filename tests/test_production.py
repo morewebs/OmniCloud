@@ -321,3 +321,51 @@ def test_startup_recovery_fails_stranded_inflight(client, uid):
         assert o, "executing order not failed by recovery"
         ev = conn.execute("SELECT detail FROM order_events WHERE status='failed'").fetchone()
         assert ev and ev["detail"] == "interrupted by restart"
+
+
+def test_empty_token_and_name_rejected(client):
+    """No zero-length credentials/account names at the trust boundary."""
+    HDRS = {"X-Requested-With": "XMLHttpRequest"}
+    client.post("/api/auth/setup", json={"username": "admin", "password": "pw123456"},
+                headers=HDRS)
+    r = client.post("/api/accounts", headers=HDRS,
+                    json={"adapter": "fake", "name": "", "token": "x"})
+    assert r.status_code == 422
+    r = client.post("/api/accounts", headers=HDRS,
+                    json={"adapter": "fake", "name": "a", "token": ""})
+    assert r.status_code == 422
+
+
+def test_short_passwords_rejected_everywhere(client):
+    """8-char floor on setup, user-create, change-password, user-patch."""
+    HDRS = {"X-Requested-With": "XMLHttpRequest"}
+    # setup path (fresh app -> no admin yet)
+    r = client.post("/api/auth/setup", json={"username": "a", "password": "short"},
+                    headers=HDRS)
+    assert r.status_code == 400, r.text
+    # now create the admin and test the other three paths
+    client.post("/api/auth/setup", json={"username": "admin", "password": "pw123456"},
+                headers=HDRS)
+    r = client.post("/api/users", json={"username": "x", "password": "short"},
+                    headers=HDRS)
+    assert r.status_code == 400, r.text
+    r = client.patch("/api/auth/me", json={"current_password": "pw123456",
+                                           "new_password": "short"}, headers=HDRS)
+    assert r.status_code == 400, r.text
+    r = client.patch("/api/users/1", json={"password": "short"}, headers=HDRS)
+    assert r.status_code == 400, r.text
+
+
+def test_firewall_attach_on_incapable_adapter_is_409(client, uid):
+    """FakeAdapter has no FIREWALL capability: attach/detach must 409, not 500."""
+    HDRS = {"X-Requested-With": "XMLHttpRequest"}
+    # uid fixture already created the admin 'ordop' - sign in as them
+    client.post("/api/auth/login", json={"username": "ordop", "password": "pw123456"},
+                headers=HDRS)
+    client.post("/api/accounts", headers=HDRS,
+                json={"adapter": "fake", "name": "a", "token": "fixture-token"})
+    r = client.post("/api/accounts/1/firewalls/1/attach/fake-1", headers=HDRS)
+    assert r.status_code == 409, r.text
+    assert "does not support" in r.json()["detail"]
+    r = client.post("/api/accounts/1/firewalls/1/detach/fake-1", headers=HDRS)
+    assert r.status_code == 409, r.text

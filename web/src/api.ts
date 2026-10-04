@@ -119,6 +119,26 @@ export function sumOverageByCurrency(
   return out;
 }
 
+// export utilities - one pair serves Billing (CSV), Fleet traffic (CSV) and
+// the raw-data inspector (JSON download)
+export function toCsv(headers: string[], rows: (string | number | null | undefined)[][]): string {
+  const esc = (v: string | number | null | undefined) => {
+    const s = v == null ? '' : String(v);
+    return /[",\n]/.test(s) ? `"${s.replaceAll('"', '""')}"` : s;
+  };
+  return [headers.map(esc).join(','), ...rows.map(r => r.map(esc).join(','))].join('\n');
+}
+
+export function downloadFile(filename: string, content: string,
+                             type = 'text/csv;charset=utf-8'): void {
+  const url = URL.createObjectURL(new Blob([content], { type }));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 // relative time ("3m ago") — the form operators scan for staleness.
 export function fmtRelative(iso: string | null | undefined): string {
   if (!iso) return '';

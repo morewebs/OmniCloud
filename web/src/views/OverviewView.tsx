@@ -1,7 +1,8 @@
+import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import Button from '@mui/material/Button';
-import type { AccountRow } from '../types';
+import type { AccountRow, ActionRow } from '../types';
 import Alert from '@mui/material/Alert';
 import Box from '@mui/material/Box';
 import Card from '@mui/material/Card';
@@ -44,6 +45,11 @@ export function OverviewView() {
     queryFn: () => api<OverviewPayload>('/api/overview') });
   const accounts = useQuery<AccountRow[]>({ queryKey: ['accounts'],
     queryFn: () => api<AccountRow[]>('/api/accounts') });
+  // "Show all" toggle for the Recent actions card: fetch the fuller log
+  // only when asked for (depth on demand, not on first paint).
+  const [allActions, setAllActions] = useState(false);
+  const actions = useQuery<ActionRow[]>({ queryKey: ['actions'],
+    queryFn: () => api<ActionRow[]>('/api/actions'), enabled: allActions });
   // First-run onboarding: an install with no provider accounts yet shows the
   // setup checklist (dismissed per-browser until the first account exists).
   const onboarding = (accounts.data?.length ?? 0) === 0
@@ -297,8 +303,7 @@ export function OverviewView() {
           <CardContent>
             <Typography variant="overline" sx={{ color: 'text.secondary' }}>Recent actions</Typography>
             <Stack spacing={1.5} sx={{ mt: 1 }}>
-              {d.recent_actions.length === 0 && <Empty text="No actions yet" />}
-              {d.recent_actions.map(a => (
+              {(allActions ? (actions.data ?? []) : d.recent_actions).map(a => (
                 <Stack key={a.id} direction="row" sx={{ justifyContent: 'space-between', alignItems: 'baseline' }}>
                   <Typography variant="body2" sx={{ fontWeight: 500 }}>
                     {a.kind} <Box component="span" sx={{ color: 'text.secondary'  }}>· {a.username ?? 'system'}</Box>
@@ -313,6 +318,12 @@ export function OverviewView() {
                   </Stack>
                 </Stack>
               ))}
+              {allActions && (actions.data?.length ?? 0) === 0 && <Empty text="No actions yet" />}
+              {!allActions && d.recent_actions.length === 0 && <Empty text="No actions yet" />}
+              <Button size="small" sx={{ alignSelf: 'flex-start' }}
+                      onClick={() => setAllActions(o => !o)}>
+                {allActions ? 'Show recent only' : 'Show all (up to 100)'}
+              </Button>
             </Stack>
           </CardContent>
         </Card>

@@ -325,6 +325,11 @@ class HetznerAdapter(ProviderAdapter):
                     "id": f["id"],
                     "name": f.get("name", ""),
                     "rules": len(f.get("rules", [])),
+                    # the actual rule list, for in-UI viewing (rule count alone
+                    # can't answer "is 22 open to the world?"). Adapters that
+                    # don't expose rules simply omit this key - the UI then
+                    # shows 'not exposed', never a guess.
+                    "rule_detail": f.get("rules", []),
                     "applied_to_count": len(ids),
                     "applied_server_ids": sorted(x for x in ids if x is not None),
                 })

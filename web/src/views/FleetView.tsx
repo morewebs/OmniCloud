@@ -25,9 +25,10 @@ import TableCell from '@mui/material/TableCell';
 import TableHead from '@mui/material/TableHead';
 import TableRow from '@mui/material/TableRow';
 import TextField from '@mui/material/TextField';
+import Tooltip from '@mui/material/Tooltip';
 import Typography from '@mui/material/Typography';
 import SearchIcon from '@mui/icons-material/Search';
-import { api, fmtBytes, fmtCurrency, fmtMoney, fmtTime, post, sumOverageByCurrency } from '../api';
+import { api, downloadFile, fmtBytes, fmtCurrency, fmtMoney, fmtTime, post, sumOverageByCurrency, toCsv } from '../api';
 import type { AdapterInfo, FleetResponse, Server } from '../types';
 import { AllowanceMeter } from '../components/AllowanceMeter';
 import { StatusBadge } from '../components/StatusBadge';
@@ -35,6 +36,7 @@ import { Value, StaleStamp } from '../components/Value';
 import { Sparkline } from '../components/Sparkline';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { FirewallDialog, AttachFirewallDialog, CreateFirewallDialog, toHetznerRules } from '../components/FirewallDialog';
+import type { FirewallRuleDetail } from '../components/FirewallDialog';
 import { PageHeader } from '../components/PageHeader';
 import { usePageTitle } from '../usePageTitle';
 import { StatTile } from '../components/StatTile';
@@ -108,6 +110,10 @@ export function FleetView() {
     [rows, page, rowsPerPage]);
 
   const allServers = fleet.data?.accounts.flatMap(a => a.servers) ?? [];
+  // server NAME for a provider id (actions carry the provider's id; the
+  // operator thinks in names)
+  const serverName = (pid: string) =>
+    allServers.find(s => s.provider_id === pid)?.name ?? pid;
   const summary = useMemo(() => {
     const running = allServers.filter(s => s.status === 'running').length;
     const notReporting = allServers.filter(s => s.status === 'unknown').length;
@@ -162,7 +168,7 @@ export function FleetView() {
           <Stack spacing={0.5}>
             {fleet.data.in_progress_actions.map(a => (
               <Typography key={a.id} variant="body2">
-                {a.kind} in progress on {a.provider_id} (started {fmtTime(a.created_at)})
+                {a.kind} in progress on {serverName(a.provider_id)} (started {fmtTime(a.created_at)})
               </Typography>
             ))}
           </Stack>
@@ -207,6 +213,7 @@ export function FleetView() {
                                 direction={sortBy === 'traffic' ? sortDir : 'asc'}
                                 onClick={() => toggleSort('traffic')}>Traffic</TableSortLabel>
               </TableCell>
+              <TableCell title="Traffic per day, recent history">Trend</TableCell>
               <TableCell align="right">
                 <TableSortLabel active={sortBy === 'monthly'}
                                 direction={sortBy === 'monthly' ? sortDir : 'asc'}
@@ -217,7 +224,7 @@ export function FleetView() {
           <TableBody>
             {pagedRows.length === 0 && (
               <TableRow>
-                <TableCell colSpan={8} sx={{ py: 6, textAlign: 'center' }}>
+                <TableCell colSpan={9} sx={{ py: 6, textAlign: 'center' }}>
                   <Typography variant="body2" sx={{ color: 'text.secondary' }}>
                     No servers match {statusFilter ? `status "${statusFilter}"` : ''}
                     {statusFilter && search ? ' and ' : ''}{search ? `"${search}"` : ''}.
@@ -253,6 +260,11 @@ export function FleetView() {
                   <TableCell><span className="num">{s.ipv4 ?? '—'}</span></TableCell>
                   <TableCell>
                     {s.allowance ? <AllowanceMeter allowance={s.allowance} /> : '—'}
+                  </TableCell>
+                  <TableCell sx={{ py: 0.75 }}>
+                    {/* recent daily traffic at a glance; renders nothing when
+                        the provider exposes no history (never a fake flat line) */}
+                    <Sparkline values={(s.traffic_history ?? []).map(h => h.bytes_used)} />
                   </TableCell>
                   <TableCell align="right">
                     <Value value={s.monthly_price ? fmtMoney(s.monthly_price) : null}
@@ -329,10 +341,13 @@ function ServerDialog({ server, isAdmin, capabilities, onClose, onDone }: {
   const [busy, setBusy] = useState(false);
   const [rebuildImage, setRebuildImage] = useState('');
   const [rename, setRename] = useState(server.name);
+  const [labelsOpen, setLabelsOpen] = useState(false);
+  const [rawOpen, setRawOpen] = useState(false);
   const [fwOpen, setFwOpen] = useState(false);        // manage attached
   const [fwAttachOpen, setFwAttachOpen] = useState(false);  // pick existing
   const [fwCreateOpen, setFwCreateOpen] = useState(false); // create new
-  const [attachedFws, setAttachedFws] = useState<{ id: number; name: string }[]>([]);
+  const [attachedFws, setAttachedFws] = useState<
+    { id: number; name: string; rule_detail?: FirewallRuleDetail[] }[]>([]);
   const has = (c: string) => capabilities.includes(c); // absent = not rendered
 
   const allFws = useQuery<{ id: number; name: string; rules: number;
@@ -352,11 +367,12 @@ function ServerDialog({ server, isAdmin, capabilities, onClose, onDone }: {
   const loadAttached = async () => {
     setFwLoading(true); setFwError(null);
     try {
-      const rows = await api<{ id: number; name: string; applied_server_ids: number[] }[]>(
+      const rows = await api<{ id: number; name: string; applied_server_ids: number[];
+        rule_detail?: FirewallRuleDetail[] }[]>(
         `/api/accounts/${server.account_id}/firewalls`);
       // provider ids may be numeric or string - compare as strings
       const attached = rows.filter(r => r.applied_server_ids.map(String).includes(server.provider_id))
-        .map(r => ({ id: r.id, name: r.name }));
+        .map(r => ({ id: r.id, name: r.name, rule_detail: r.rule_detail }));
       setAttachedFws(attached);
     } catch (e) {
       setFwError((e as Error).message);
@@ -398,14 +414,23 @@ function ServerDialog({ server, isAdmin, capabilities, onClose, onDone }: {
             <Stack direction="row" spacing={1} sx={{ alignItems: "center", flexWrap: "wrap" }}>
               <StatusBadge status={server.status} />
               <Chip size="small" variant="outlined" label={server.adapter} />
-              <Typography variant="caption" sx={{ color: 'text.secondary' }}>
-                {server.provider_id}
-              </Typography>
+              <Tooltip title="The provider's own ID for this server — useful when talking to their support.">
+                <Typography variant="caption" sx={{ color: 'text.secondary' }} component="span">
+                  {server.provider_id}
+                </Typography>
+              </Tooltip>
               {server.ipv4 && <Chip size="small" variant="outlined" className="num" label={server.ipv4} />}
               {server.created && (
                 <Typography variant="caption" sx={{ color: 'text.secondary' }}>
                   created {new Date(server.created).toLocaleDateString()}
                 </Typography>
+              )}
+              {server.labels && Object.keys(server.labels).length > 0 && (
+                <Stack direction="row" spacing={0.5} sx={{ flexWrap: 'wrap', gap: 0.5 }}>
+                  {Object.entries(server.labels).map(([k, v]) =>
+                    <Chip key={k} size="small" variant="outlined" color="primary"
+                          label={`${k}${v ? `: ${v}` : ''}`} />)}
+                </Stack>
               )}
             </Stack>
 
@@ -425,6 +450,23 @@ function ServerDialog({ server, isAdmin, capabilities, onClose, onDone }: {
               <Stack spacing={0.5}>
                 <Typography variant="overline" sx={{ lineHeight: 1.6 }}>Traffic history</Typography>
                 <Sparkline values={(history.data?.traffic_history ?? []).map(h => h.bytes_used)} />
+                {(history.data?.traffic_history ?? []).length > 0 && (
+                  <Stack spacing={0.25}>
+                    {(history.data?.traffic_history ?? []).slice(-5).reverse().map(h => (
+                      <Typography key={h.day} variant="caption"
+                                  sx={{ color: 'text.secondary' }} className="num">
+                        {h.day.slice(5)}: {fmtBytes(h.bytes_used)}
+                      </Typography>
+                    ))}
+                    <Button size="small" sx={{ alignSelf: 'flex-start', mt: 0.5 }}
+                            onClick={() =>
+                              downloadFile(`traffic-${server.name}.csv`,
+                                toCsv(['day', 'bytes_used'],
+                                  (history.data?.traffic_history ?? []).map(h => [h.day, h.bytes_used])))}>
+                      Download CSV
+                    </Button>
+                  </Stack>
+                )}
               </Stack>
               <Divider orientation="vertical" flexItem />
               <Box sx={{ flex: 1, minWidth: 0 }}>
@@ -452,6 +494,10 @@ function ServerDialog({ server, isAdmin, capabilities, onClose, onDone }: {
                   {has('rename') && (
                     <Button size="small" variant="outlined" disabled={busy || rename === server.name}
                             onClick={() => act('rename', { name: rename })}>Rename</Button>
+                  )}
+                  {has('relabel') && (
+                    <Button size="small" variant="outlined" disabled={busy}
+                            onClick={() => setLabelsOpen(o => !o)}>Labels…</Button>
                   )}
                   {has('reboot') && (
                     <Button size="small" variant="outlined" disabled={busy}
@@ -484,7 +530,30 @@ function ServerDialog({ server, isAdmin, capabilities, onClose, onDone }: {
                             onClick={() => setConfirm('delete')}>Delete…</Button>
                   )}
                 </Stack>
+                {labelsOpen && (
+                  <LabelEditor initial={server.labels ?? {}} busy={busy}
+                               onSave={labels => act('relabel', { labels })} />
+                )}
               </>
+            )}
+
+            {/* raw data: makes the not_exposed contract auditable in-UI */}
+            <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
+              <Button size="small" onClick={() => setRawOpen(o => !o)}>
+                {rawOpen ? 'Hide raw data' : 'Raw data'}
+              </Button>
+              <Button size="small" onClick={() =>
+                downloadFile(`server-${server.name}.json`,
+                  JSON.stringify(server, null, 2), 'application/json')}>
+                Download JSON
+              </Button>
+            </Stack>
+            {rawOpen && (
+              <Box component="pre" className="num"
+                   sx={{ m: 0, p: 1.5, fontSize: 12, overflowX: 'auto',
+                         bgcolor: 'action.hover', borderRadius: 1 }}>
+                {JSON.stringify(server, null, 2)}
+              </Box>
             )}
           </Stack>
         </DialogContent>
@@ -603,5 +672,45 @@ function ServerDialog({ server, isAdmin, capabilities, onClose, onDone }: {
       <LinearProgress sx={{ display: busy ? 'block' : 'none', position: 'fixed', top: 0, left: 0, right: 0,
         zIndex: t => t.zIndex.modal + 1 }} />
     </>
+  );
+}
+
+/** key/value rows over server.labels — same pattern as the rename field. */
+function LabelEditor({ initial, busy, onSave }: {
+  initial: Record<string, string>; busy: boolean;
+  onSave: (labels: Record<string, string>) => void;
+}) {
+  // rows: [key, value] pairs; blank key rows are dropped on save
+  const [rows, setRows] = useState(
+    Object.entries(initial).map(([k, v]) => [k, v] as [string, string]));
+  const setRow = (i: number, part: 0 | 1, val: string) =>
+    setRows(rs => rs.map((r, j) => j === i ? (part ? [r[0], val] : [val, r[1]]) : r));
+  const labels = Object.fromEntries(rows.filter(([k]) => k.trim()));
+  const dirty = JSON.stringify(labels) !== JSON.stringify(initial);
+
+  return (
+    <Stack spacing={1} sx={{ mt: 1 }}>
+      {rows.map(([k, v], i) => (
+        <Stack key={i} direction="row" spacing={1}>
+          <TextField size="small" label="Key" value={k}
+                     onChange={e => setRow(i, 0, e.target.value)} sx={{ width: 140 }} />
+          <TextField size="small" label="Value" value={v}
+                     onChange={e => setRow(i, 1, e.target.value)} sx={{ flex: 1 }} />
+          <Button size="small" color="error"
+                  onClick={() => setRows(rs => rs.filter((_, j) => j !== i))}>
+            Remove
+          </Button>
+        </Stack>
+      ))}
+      <Stack direction="row" spacing={1}>
+        <Button size="small" onClick={() => setRows(rs => [...rs, ['', '']])}>
+          Add label
+        </Button>
+        <Button size="small" variant="contained" disabled={busy || !dirty}
+                onClick={() => onSave(labels)}>
+          Save labels
+        </Button>
+      </Stack>
+    </Stack>
   );
 }

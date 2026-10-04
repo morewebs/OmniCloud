@@ -33,6 +33,15 @@ export interface FirewallRow {
   applied_to_count: number;
 }
 
+/** one Hetzner rule as the provider reports it; adapters that don't expose
+ *  rules omit rule_detail entirely and the UI shows 'not exposed'. */
+export interface FirewallRuleDetail {
+  direction: 'in' | 'out';
+  protocol: 'tcp' | 'udp' | 'icmp';
+  port?: string;
+  source_ips?: string[];
+}
+
 /**
  * Firewall management optimized for real fleets: Hetzner firewalls are SHARED
  * resources applied to batches of servers, and a firewall can carry 100+
@@ -43,8 +52,9 @@ export interface FirewallRow {
 export function FirewallDialog({ open, serverName, attachedFirewalls, onDetach, onShowCreate, onClose, loading, error }: {
   open: boolean;
   serverName: string;
-  /** firewalls currently attached to this server (id, name). */
-  attachedFirewalls: { id: number; name: string }[];
+  /** firewalls currently attached to this server (id, name, rule_detail?).
+   *  rule_detail present only where the adapter exposes the rules. */
+  attachedFirewalls: { id: number; name: string; rule_detail?: FirewallRuleDetail[] }[];
   onDetach: (firewallId: number) => Promise<void> | void;
   onShowCreate: () => void;
   onClose: () => void;
@@ -54,6 +64,7 @@ export function FirewallDialog({ open, serverName, attachedFirewalls, onDetach, 
   const [search, setSearch] = useState('');
   const [confirmId, setConfirmId] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
+  const [rulesOpenId, setRulesOpenId] = useState<number | null>(null);
 
   const filtered = useMemo(
     () => attachedFirewalls.filter(f => !search || f.name.toLowerCase().includes(search)),
@@ -103,7 +114,7 @@ export function FirewallDialog({ open, serverName, attachedFirewalls, onDetach, 
                 </Typography>
               )}
               {filtered.map(f => (
-                <ListItem key={f.id} disableGutters
+                <ListItem key={f.id} disableGutters sx={{ display: 'block' }}
                   secondaryAction={
                     confirmId === f.id ? (
                       <Stack direction="row" spacing={0.5}>
@@ -128,6 +139,31 @@ export function FirewallDialog({ open, serverName, attachedFirewalls, onDetach, 
                       ? 'This opens the server to all traffic' : undefined}
                     slotProps={{ primary: { sx: { fontSize: 14, fontWeight: 500 } } }}
                   />
+                  <Button size="small" sx={{ mt: 0.5, mr: 8 }}
+                          onClick={() => setRulesOpenId(id => id === f.id ? null : f.id)}>
+                    {rulesOpenId === f.id ? 'Hide rules' : 'View rules'}
+                  </Button>
+                  {rulesOpenId === f.id && (
+                    f.rule_detail === undefined
+                      ? <Typography variant="caption" sx={{ display: 'block', color: 'text.secondary', fontStyle: 'italic' }}>
+                          rules not exposed by this provider
+                        </Typography>
+                      : f.rule_detail.length === 0
+                        ? <Typography variant="caption" sx={{ display: 'block', color: 'text.secondary' }}>
+                            no rules — this firewall allows nothing
+                          </Typography>
+                        : <List dense disablePadding sx={{ pl: 2 }}>
+                            {f.rule_detail.map((r, i) => (
+                              <ListItem key={i} disableGutters sx={{ py: 0 }}>
+                                <Typography variant="caption" className="num"
+                                            sx={{ color: 'text.secondary' }}>
+                                  {r.direction} {r.protocol} {r.port || 'any port'}
+                                  {r.source_ips?.length ? ` from ${r.source_ips.join(', ')}` : ' from anywhere'}
+                                </Typography>
+                              </ListItem>
+                            ))}
+                          </List>
+                  )}
                 </ListItem>
               ))}
             </List>

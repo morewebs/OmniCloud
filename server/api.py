@@ -369,9 +369,18 @@ def force_sync(account_id: int, user=Depends(auth.require_user)):
 
 @router.get("/adapters")
 def adapters(user: auth.User = Depends(auth.require_user)):
-    """Fleet adapters (account-backed) + catalog providers (marketplace-only)
-    in one response, each with its catalog source."""
-    return accounts.adapter_info() + catalog.providers_info()
+    """One row per provider: fleet adapters (account-backed, with
+    capabilities) merged with catalog providers (marketplace-only). A
+    provider in both registries (hetzner/leaseweb/ovh) appears ONCE - the
+    fleet row, tagged with its catalog source."""
+    out = accounts.adapter_info()
+    seen = {a["key"] for a in out}
+    for p in catalog.providers_info():
+        if p["key"] in seen:
+            continue
+        out.append(p)
+        seen.add(p["key"])
+    return out
 
 
 # -- actions ----------------------------------------------------------------------

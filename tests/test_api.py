@@ -149,19 +149,26 @@ def test_api_tokens_full_lifecycle(client):
 
 
 def test_adapters_lists_fleet_and_catalog_providers(client):
-    """The Adapters view merges fleet adapters with catalog providers;
-    credentials views must offer only fleet adapters (source absent)."""
+    """One row per provider: the Adapters view merges fleet adapters with
+    catalog providers; a provider in both registries appears ONCE (the
+    fleet row). Credentials views offer only fleet adapters (source absent)."""
     _admin(client)
     r = client.get("/api/adapters")
     assert r.status_code == 200
-    keys = {a["key"]: a for a in r.json()}
-    # fleet adapters carry capabilities and no catalog source
-    assert set(a["key"] for a in keys.values() if not a.get("source")) == {"fake"}
-    # all 5 catalog providers present with honest source labels
-    for key in ("hetzner", "leaseweb", "ovh", "gcore", "tube"):
-        assert keys[key]["source"] == "live"
+    rows = r.json()
+    keys = [a["key"] for a in rows]
+    assert len(keys) == len(set(keys)), "no provider may appear twice"
+    row_by_key = {a["key"]: a for a in rows}
+    # fleet adapters (incl. the registered real ones) carry capabilities and
+    # no catalog source
+    fleet = {a["key"] for a in rows if not a.get("source")}
+    assert fleet == {"fake", "hetzner", "leaseweb", "ovh"}
+    assert row_by_key["ovh"]["capabilities"], "ovh is a full fleet adapter"
+    # catalog-only providers carry their honest source label
+    for key in ("gcore", "tube"):
+        assert row_by_key[key]["source"] == "live"
     for key in ("netlen", "lightnode"):
-        assert keys[key]["source"] == "seeded"
+        assert row_by_key[key]["source"] == "seeded"
     # no credential can be created for a catalog-only provider (ovh is now
     # a full fleet adapter - gcore remains catalog-only)
     r = client.post("/api/accounts", headers=HDRS,

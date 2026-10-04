@@ -158,9 +158,13 @@ export function FleetView() {
                   sub={`${summary.running} running · ${summary.notReporting} unknown`} />
         <StatTile label="Traffic this month" value={fmtBytes(summary.traffic)}
                   sub="summed across synced servers" dominant />
-        <StatTile label="Projected overage"
-                  value={summary.overage || '—'}
-                  sub="adapter-reported, this month" />
+        <Tooltip title="What you'll pay extra if traffic keeps at this pace until the window resets — as the provider's own API computes it, not a guess.">
+          <span>
+            <StatTile label="Projected overage"
+                      value={summary.overage || '—'}
+                      sub="adapter-reported, this month" />
+          </span>
+        </Tooltip>
       </Stack>
 
       {fleet.data.in_progress_actions.length > 0 && (

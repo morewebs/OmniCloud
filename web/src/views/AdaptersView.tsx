@@ -95,6 +95,22 @@ export function AdaptersView() {
             {a.display_name}: {CATALOG_NOTES[a.key]}
           </Typography>
         ))}
+        <Typography variant="body2" sx={{ color: 'text.secondary', mt: 1 }}>
+          Adding a provider = one file in <code>server/adapters/</code> implementing
+          the contract in <code>base.py</code>. See <code>docs/provider-truth.md</code>
+          for why some providers are catalog-only.
+        </Typography>
+        <Typography variant="body2" sx={{ color: 'text.secondary' }}>
+          Building on top of the panel? Every route here is also a JSON API:{' '}
+          <a href="/api/docs" target="_blank" rel="noreferrer">interactive docs</a>,
+          or with a token from Settings:
+        </Typography>
+        <Box component="pre" className="num"
+             sx={{ m: 0, p: 1.5, fontSize: 12, bgcolor: 'action.hover', borderRadius: 1,
+                   overflowX: 'auto' }}>
+{`curl -H "Authorization: Bearer <token>" \\
+  http://localhost:8000/api/fleet`}
+        </Box>
       </Stack>
     </Stack>
   );

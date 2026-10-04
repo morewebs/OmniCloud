@@ -19,7 +19,7 @@ import TableRow from '@mui/material/TableRow';
 import TextField from '@mui/material/TextField';
 import Tooltip from '@mui/material/Tooltip';
 import Typography from '@mui/material/Typography';
-import { api, fmtBytes, post } from '../api';
+import { api, fmtBytes, fmtCurrency, post } from '../api';
 import { PageHeader } from '../components/PageHeader';
 import { EmptyState } from '../components/EmptyState';
 import { OrderDialog } from '../components/OrderDialog';
@@ -141,6 +141,31 @@ export function CatalogView() {
                                         setMinTraffic(''); setIpOnly(false); }} />
         : (
           <>
+          {/* best value in view: cheapest per TB, per currency (never
+              compared across currencies). Priced plans only. */}
+          {(() => {
+            const priced = rows.filter(p => p.price_monthly && p.included_traffic_bytes);
+            const byCur = new Map<string, Plan>();
+            for (const p of priced) {
+              const cur = p.price_monthly!.currency;
+              const perTb = Number(p.price_monthly!.amount) / (p.included_traffic_bytes! / 1e12);
+              const curBest = byCur.get(cur);
+              if (!curBest
+                  || perTb < Number(curBest.price_monthly!.amount)
+                     / (curBest.included_traffic_bytes! / 1e12)) {
+                byCur.set(cur, p);
+              }
+            }
+            const parts = [...byCur.entries()].map(([cur, p]) => {
+              const perTb = Number(p.price_monthly!.amount) / (p.included_traffic_bytes! / 1e12);
+              return `${p.adapter} ${p.name} — ${fmtCurrency(perTb, cur)}/TB`;
+            });
+            return parts.length > 0 && (
+              <Typography variant="body2" sx={{ color: 'text.secondary' }}>
+                Best value in view: {parts.join(' · ')}
+              </Typography>
+            );
+          })()}
           {rows.length > 200 && (
             <Typography variant="caption" sx={{ color: 'text.secondary' }}>
               showing the first 200 of {rows.length} matching plans — narrow the filters

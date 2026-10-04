@@ -21,6 +21,11 @@ from fastapi.responses import JSONResponse  # noqa: E402
 
 
 async def enforce_csrf(request: Request, call_next):
+    # Bearer requests skip the CSRF check: no cookie is attached, so there
+    # is no cross-site request to forge (the token travels in a header the
+    # browser's SameSite policy can't be tricked into sending).
+    if request.headers.get("authorization", "").startswith("Bearer "):
+        return await call_next(request)
     if request.url.path.startswith("/api") and request.method != "GET" \
             and request.headers.get("x-requested-with") != "XMLHttpRequest":
         return JSONResponse({"detail": "missing X-Requested-With header"}, 403)
@@ -148,6 +153,33 @@ def _set_cookie(response: Response, token: str) -> None:
     secure = os.environ.get("OMNICLOUD_COOKIE_SECURE", "1") not in ("0", "false")
     response.set_cookie(auth.COOKIE, token, httponly=True, samesite="strict",
                         secure=secure, max_age=config.SESSION_TTL_DAYS * 86400)
+
+
+# -- personal API tokens (developer access) ---------------------------------
+
+class TokenBody(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
+
+
+@router.get("/auth/tokens")
+def list_tokens(user: auth.User = Depends(auth.require_user)):
+    """Metadata only - the plaintext never comes back after creation."""
+    return auth.list_api_tokens(user.id)
+
+
+@router.post("/auth/tokens")
+def create_token(body: TokenBody, user: auth.User = Depends(auth.require_user)):
+    # any signed-in user can mint their own token (viewers keep viewer role
+    # through it); the plaintext is shown exactly once, then only the hash.
+    token_id, plaintext = auth.create_api_token(user.id, body.name)
+    return {"id": token_id, "name": body.name, "token": plaintext}
+
+
+@router.delete("/auth/tokens/{token_id}")
+def revoke_token(token_id: int, user: auth.User = Depends(auth.require_user)):
+    if not auth.revoke_api_token(user.id, token_id):
+        raise HTTPException(404, "no such token (yours to revoke only)")
+    return {"ok": True}
 
 
 # -- fleet --------------------------------------------------------------------

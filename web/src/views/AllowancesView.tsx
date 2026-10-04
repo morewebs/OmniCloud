@@ -14,7 +14,7 @@ import TableHead from '@mui/material/TableHead';
 import TablePagination from '@mui/material/TablePagination';
 import TableRow from '@mui/material/TableRow';
 import Typography from '@mui/material/Typography';
-import { api, fmtCurrency, fmtTime, sumOverageByCurrency } from '../api';
+import { api, downloadFile, fmtCurrency, fmtTime, sumOverageByCurrency, toCsv } from '../api';
 import { usePageTitle } from '../usePageTitle';
 import type { Allowance } from '../types';
 import { AllowanceMeter } from '../components/AllowanceMeter';
@@ -70,7 +70,27 @@ export function AllowancesView() {
   return (
     <Stack spacing={3}>
       <PageHeader title="Billing"
-        subtitle="Traffic allowances and overage exposure — every number adapter-reported." />
+        subtitle="Traffic allowances and overage exposure — every number adapter-reported."
+        actions={
+          <Button size="small" variant="outlined" disabled={rows.length === 0}
+                  onClick={() =>
+                    downloadFile('billing.csv', toCsv(
+                      ['server', 'provider', 'allowance_bytes', 'used_bytes', 'pct',
+                       'counting', 'projected_overage', 'currency', 'as_of'],
+                      rows.map(r => [
+                        r.name, r.adapter,
+                        r.allowance.included_bytes ?? '',
+                        r.allowance.used_bytes ?? '',
+                        r.allowance.used_bytes != null && r.allowance.included_bytes
+                          ? (r.allowance.used_bytes / r.allowance.included_bytes * 100).toFixed(1) : '',
+                        r.allowance.counting ?? '',
+                        r.allowance.projected_overage_cost?.amount ?? '',
+                        r.allowance.projected_overage_cost?.currency ?? '',
+                        r.last_seen_at,
+                      ])))}>
+            Download CSV
+          </Button>
+        } />
 
       <Box>
         <Typography variant="subtitle1" gutterBottom>Billing exposure</Typography>

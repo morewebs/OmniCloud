@@ -18,7 +18,11 @@ log = logging.getLogger("omnicloud.app")
 
 
 def create_app() -> FastAPI:
-    app = FastAPI(title="OmniCloud", docs_url=None, redoc_url=None, openapi_url="/api/openapi.json")
+    # /api/docs: interactive API explorer. Endpoints still require auth
+    # (session cookie or Bearer token) - the schema discloses nothing that
+    # isn't already in the open-source codebase.
+    app = FastAPI(title="OmniCloud", docs_url="/api/docs", redoc_url=None,
+                  openapi_url="/api/openapi.json")
     app.include_router(api.router)
     app.middleware("http")(api.enforce_csrf)
 

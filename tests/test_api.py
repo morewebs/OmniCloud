@@ -108,6 +108,46 @@ def test_missing_csrf_header_rejected(client):
     assert r.status_code == 403
 
 
+def test_api_tokens_full_lifecycle(client):
+    """Personal API tokens: create -> use on GET and POST mutation (bearer
+    skips CSRF - no cookie to forge), viewer token 403 on admin route,
+    revoke -> 401, and the plaintext never appears in any list."""
+    _admin(client)
+    r = client.post("/api/auth/tokens", headers=HDRS, json={"name": "ci-token"})
+    assert r.status_code == 200
+    tok = r.json()
+    bearer = {"Authorization": f"Bearer {tok['token']}"}
+
+    # drop the session cookie so the bearer is the ONLY credential on the wire
+    client.post("/api/auth/logout", headers=HDRS)
+    # GET via bearer, no cookie, no CSRF header needed for GETs anyway
+    assert client.get("/api/fleet", headers=bearer).status_code == 200
+    # POST mutation via bearer WITHOUT the CSRF header: no cookie => no CSRF
+    r = client.post("/api/servers/1/x/actions", headers=bearer,
+                    json={"kind": "reboot", "params": {}})
+    assert r.status_code == 404  # authed past CSRF+role; 404 = no account 1
+    # list shows metadata only - the plaintext must never come back
+    listing = client.get("/api/auth/tokens", headers=bearer).json()
+    assert any(t["id"] == tok["id"] and t["name"] == "ci-token" for t in listing)
+    assert all("token" not in t for t in listing), "token plaintext in list"
+    # last_used_at recorded by the bearer calls above
+    assert next(t for t in listing if t["id"] == tok["id"])["last_used_at"]
+
+    # revoke via the bearer itself (it is its own credential) -> later calls 401
+    assert client.delete(f"/api/auth/tokens/{tok['id']}", headers=bearer).status_code == 200
+    assert client.get("/api/fleet", headers=bearer).status_code == 401
+
+    # a viewer's token keeps viewer semantics: reads fine, admin-only 403.
+    # (_viewer needs the admin session to CREATE the user, so sign back in.)
+    client.post("/api/auth/login", json={"username": "admin", "password": "pw123456"},
+                headers=HDRS)
+    _viewer(client, "tokview")
+    vt = client.post("/api/auth/tokens", headers=HDRS, json={"name": "v"}).json()
+    vb = {"Authorization": f"Bearer {vt['token']}"}
+    assert client.get("/api/fleet", headers=vb).status_code == 200
+    assert client.get("/api/audit", headers=vb).status_code == 403
+
+
 def test_adapters_lists_fleet_and_catalog_providers(client):
     """The Adapters view merges fleet adapters with catalog providers;
     credentials views must offer only fleet adapters (source absent)."""

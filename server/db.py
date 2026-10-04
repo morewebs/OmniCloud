@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 
 from . import config
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS users (
@@ -128,7 +128,15 @@ CREATE TABLE IF NOT EXISTS order_events (
     detail TEXT,
     created_at TEXT NOT NULL
 );
-INSERT OR IGNORE INTO settings(key, value) VALUES ('schema_version', '2');
+CREATE TABLE IF NOT EXISTS api_tokens (
+    id INTEGER PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    token_hash TEXT NOT NULL UNIQUE,
+    created_at TEXT NOT NULL,
+    last_used_at TEXT
+);
+INSERT OR IGNORE INTO settings(key, value) VALUES ('schema_version', '3');
 """
 
 

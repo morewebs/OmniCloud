@@ -372,6 +372,10 @@ ROUTES = {
          "created_at": "2026-09-28T09:00:00+00:00"},
     ],
     "/api/settings": {"sync_interval:1": "5", "sync_interval:2": "15"},
+    "/api/auth/tokens": [
+        {"id": 1, "name": "backup-script", "created_at": "2026-09-20T12:00:00+00:00",
+         "last_used_at": "2026-10-04T06:00:00+00:00"},
+    ],
     "/api/update/status": {"current": "0.2.0", "latest": None, "repo": "morewebs/OmniCloud",
                            "checked_at": "2026-10-03T09:00:00+00:00", "notes": None,
                            "url": None, "error": None, "applying": False},

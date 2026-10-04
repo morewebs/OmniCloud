@@ -59,6 +59,10 @@ ever displayed).
   counting rule in plain language and never guesses a billing model.
 - **Audit:** every mutation records who, when, what, and the before/after
   state.
+- **API access:** every route the UI uses is a JSON API. Personal tokens
+  (Settings → API tokens) authenticate as `Authorization: Bearer <token>` -
+  same roles as your login, stored hashed, shown once, revocable. Interactive
+  docs at `/api/docs` (they require auth like everything else).
 
 ## Configuration
 

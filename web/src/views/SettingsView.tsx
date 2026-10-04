@@ -6,11 +6,12 @@ import Skeleton from '@mui/material/Skeleton';
 import Stack from '@mui/material/Stack';
 import TextField from '@mui/material/TextField';
 import Typography from '@mui/material/Typography';
-import { api, post, put } from '../api';
+import { api, del, post, put } from '../api';
 import Chip from '@mui/material/Chip';
 import Tooltip from '@mui/material/Tooltip';
 import type { AccountRow } from '../types';
 import { PageHeader } from '../components/PageHeader';
+import { ConfirmDialog } from '../components/ConfirmDialog';
 import { Toast } from '../components/Toast';
 import type { ToastMsg } from '../components/Toast';
 import { usePageTitle } from '../usePageTitle';
@@ -120,7 +121,117 @@ export function SettingsView() {
       </Stack>
 
       <UpdatePanel onToast={(m, sev) => setToast({ message: m, severity: sev })} />
+      <ApiTokensPanel onToast={(m, sev) => setToast({ message: m, severity: sev })} />
       <Toast msg={toast} onClose={() => setToast(null)} />
+    </Stack>
+  );
+}
+
+interface TokenRow {
+  id: number;
+  name: string;
+  created_at: string;
+  last_used_at: string | null;
+}
+
+/** Personal API tokens (developer access path). The plaintext is shown
+ *  exactly once at creation - the server stores only its hash. */
+function ApiTokensPanel({ onToast }: { onToast: (m: string, s?: 'success' | 'error') => void }) {
+  const tokens = useQuery<TokenRow[]>({ queryKey: ['tokens'],
+    queryFn: () => api<TokenRow[]>('/api/auth/tokens') });
+  const qc = useQueryClient();
+  const [name, setName] = useState('');
+  const [created, setCreated] = useState<string | null>(null); // one-time reveal
+  const [revoking, setRevoking] = useState<TokenRow | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const create = async () => {
+    setBusy(true);
+    try {
+      const r = await post<{ token: string }>('/api/auth/tokens', { name: name.trim() });
+      setCreated(r.token);
+      setName('');
+      qc.invalidateQueries({ queryKey: ['tokens'] });
+    } catch (e) {
+      onToast((e as Error).message, 'error');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Stack spacing={1.5} sx={{ maxWidth: 560 }}>
+      <Typography variant="subtitle1">API tokens</Typography>
+      <Typography variant="body2" sx={{ color: 'text.secondary' }}>
+        For scripts and tools hitting the panel's API. Shown once at creation,
+        stored hashed — revoke anything you don't recognize. Usage:{' '}
+        <code>Authorization: Bearer &lt;token&gt;</code>; interactive docs at{' '}
+        <a href="/api/docs" target="_blank" rel="noreferrer">/api/docs</a>.
+      </Typography>
+      {created && (
+        <Alert severity="success" icon={false}>
+          <Stack direction="row" spacing={1} sx={{ alignItems: 'center', flexWrap: 'wrap', gap: 1 }}>
+            <Typography variant="body2" className="num"
+                        sx={{ wordBreak: 'break-all' }}>{created}</Typography>
+            <Button size="small" onClick={() => navigator.clipboard.writeText(created)}>
+              Copy
+            </Button>
+            <Button size="small" onClick={() => setCreated(null)}>Done</Button>
+          </Stack>
+          <Typography variant="caption" sx={{ color: 'text.secondary' }}>
+            Copy it now — it is never shown again.
+          </Typography>
+        </Alert>
+      )}
+      {(tokens.data ?? []).map(t => (
+        <Stack key={t.id} direction="row" spacing={1}
+               sx={{ alignItems: 'center', justifyContent: 'space-between' }}>
+          <Stack sx={{ minWidth: 0 }}>
+            <Typography variant="body2" sx={{ fontWeight: 500 }}>{t.name}</Typography>
+            <Typography variant="caption" sx={{ color: 'text.secondary' }}>
+              created {new Date(t.created_at).toLocaleDateString()}
+              {t.last_used_at && ` · last used ${new Date(t.last_used_at).toLocaleString()}`}
+            </Typography>
+          </Stack>
+          <Button size="small" color="error" onClick={() => setRevoking(t)}>
+            Revoke
+          </Button>
+        </Stack>
+      ))}
+      {tokens.data?.length === 0 && (
+        <Typography variant="caption" sx={{ color: 'text.secondary' }}>
+          no tokens yet
+        </Typography>
+      )}
+      <Stack direction="row" spacing={1}>
+        <TextField size="small" label="Token name" value={name}
+                   onChange={e => setName(e.target.value)} sx={{ width: 240 }} />
+        <Button variant="contained" disabled={busy || !name.trim()} onClick={create}>
+          {busy ? 'Creating…' : 'Create token'}
+        </Button>
+      </Stack>
+      <ConfirmDialog
+        open={revoking !== null}
+        title="Revoke API token"
+        serverName={revoking?.name ?? ''}
+        body={`Revoke ${revoking?.name}? Anything using this token stops working immediately.`}
+        confirmLabel="Revoke"
+        confirming={busy}
+        onConfirm={async () => {
+          setBusy(true);
+          try {
+            await del(`/api/auth/tokens/${revoking!.id}`);
+            setRevoking(null);
+            qc.invalidateQueries({ queryKey: ['tokens'] });
+            onToast('token revoked', 'success');
+          } catch (e) {
+            onToast((e as Error).message, 'error');
+          } finally {
+            setBusy(false);
+          }
+        }}
+        onClose={() => setRevoking(null)}
+      />
     </Stack>
   );
 }

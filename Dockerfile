@@ -1,10 +1,12 @@
 # OmniCloud: SPA build (node) -> app (python-slim)
 FROM node:22-slim AS web
-WORKDIR /build
+# /build/web mirrors the local layout: vite's outDir is '../server/static',
+# relative to the vite root - so the output lands at /build/server/static
+WORKDIR /build/web
 COPY web/package.json web/package-lock.json ./
 RUN npm ci
 COPY web/ ./
-RUN npm run build           # outputs to /build/server/static via vite outDir
+RUN npm run build           # -> /build/server/static
 
 FROM python:3.12-slim
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv

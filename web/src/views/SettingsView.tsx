@@ -240,6 +240,7 @@ interface UpdateState {
   current: string; latest: string | null; repo: string;
   available: boolean; checked_at: string | null; notes: string | null;
   url: string | null; error: string | null; applying: boolean;
+  update_method?: 'rebuild-image';
 }
 
 function UpdatePanel({ onToast }: { onToast: (m: string, s?: 'success' | 'error') => void }) {
@@ -257,8 +258,10 @@ function UpdatePanel({ onToast }: { onToast: (m: string, s?: 'success' | 'error'
         <Chip size="small" variant="outlined" className="num" label={`v${d.current}`} />
       </Stack>
       <Typography variant="body2" sx={{ color: 'text.secondary' }}>
-        Checks GitHub ({d.repo}) daily; the apply button pulls the latest code
-        and restarts the panel.
+        Checks GitHub ({d.repo}) daily;{' '}
+        {d.update_method === 'rebuild-image'
+          ? 'this install updates by rebuilding the container image (see DEPLOY.md).'
+          : 'the apply button pulls the latest code and restarts the panel.'}
       </Typography>
       {available && (
         <Alert severity="info" icon={false}>
@@ -267,6 +270,12 @@ function UpdatePanel({ onToast }: { onToast: (m: string, s?: 'success' | 'error'
               <b>v{d.latest}</b> is available (running v{d.current})
               {d.url && <> — <a href={d.url} target="_blank" rel="noreferrer">release notes</a></>}
             </Typography>
+            {d.update_method === 'rebuild-image' && (
+              <Typography variant="caption" sx={{ color: 'text.secondary' }}>
+                To update: pull the latest code on the host, rebuild the image,
+                and recreate the container. Your data volume is untouched.
+              </Typography>
+            )}
             {d.notes && <Typography variant="caption" sx={{ color: 'text.secondary',
               whiteSpace: 'pre-wrap', maxHeight: 120, overflowY: 'auto', display: 'block' }}>
               {d.notes}
@@ -292,7 +301,7 @@ function UpdatePanel({ onToast }: { onToast: (m: string, s?: 'success' | 'error'
                 }}>
           Check now
         </Button>
-        {available && (
+        {available && d.update_method !== 'rebuild-image' && (
           <Tooltip title="Pulls the latest code, rebuilds the panel, and restarts it. Your data (database, credentials, settings) is untouched.">
             <Button size="small" variant="contained" color="primary"
                     disabled={applying || d.applying}

@@ -19,6 +19,9 @@ COPY server/ ./server/
 COPY --from=web /build/server/static ./server/static
 
 ENV OMNICLOUD_DB=/data/omnicloud.db
+# tells update.py the one-click updater can't run here (no git, COPY'd tree);
+# the panel shows 'update by rebuilding the image' instead of an Apply button
+ENV OMNICLOUD_CONTAINER=1
 RUN useradd -m omni && mkdir -p /data && chown -R omni /data /app
 USER omni
 EXPOSE 8000

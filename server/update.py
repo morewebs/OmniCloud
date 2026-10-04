@@ -30,12 +30,19 @@ API_URL = f"https://api.github.com/repos/{REPO}/releases/latest"
 EXIT_UPDATE = 78
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+# A Docker image COPYs the code in (no git checkout, no git binary) - the
+# one-click updater can never work there; deployments update by rebuilding
+# the image. Declared by the Dockerfile at build time.
+CONTAINER_INSTALL = os.environ.get("OMNICLOUD_CONTAINER", "") == "1"
 _status: dict = {"checked_at": None, "latest": None, "available": False,
                 "notes": None, "url": None, "error": None, "applying": False}
 
 
 def status() -> dict:
-    return {**_status, "current": version.VERSION, "repo": REPO}
+    st = {**_status, "current": version.VERSION, "repo": REPO}
+    if CONTAINER_INSTALL:
+        st["update_method"] = "rebuild-image"
+    return st
 
 
 async def check() -> dict:
@@ -79,6 +86,9 @@ async def apply() -> dict:
         raise RuntimeError("an update is already in progress")
     if not _status["available"]:
         raise RuntimeError("no newer version is known - check for updates first")
+    if CONTAINER_INSTALL:
+        raise RuntimeError("container installs update by rebuilding the image - "
+                           "git pull inside the container is impossible (see DEPLOY.md)")
     if not REPO_ROOT.is_dir():
         raise RuntimeError("this install is not a git checkout - "
                            "update manually (see DEPLOY.md)")

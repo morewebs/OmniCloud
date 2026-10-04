@@ -96,19 +96,24 @@ function Shell({ user, themeMode, onToggleTheme }: {
   // banner instead of the panel silently freezing
   const [streamDown, setStreamDown] = useState(false);
   useEffect(() => subscribeStream((ev) => {
-    if (ev === 'servers_updated') {
+    if (ev === 'servers_updated' || ev === 'action') {
       qc.invalidateQueries({ queryKey: ['fleet'] });
       qc.invalidateQueries({ queryKey: ['server'] });   // open dialog sparkline
       qc.invalidateQueries({ queryKey: ['overview'] });
+      // billing/allowances derive from fleet data - live-update them too
+      qc.invalidateQueries({ queryKey: ['allowances'] });
+      qc.invalidateQueries({ queryKey: ['billing'] });
     }
-    if (ev === 'action') {
-      qc.invalidateQueries({ queryKey: ['fleet'] });
-      qc.invalidateQueries({ queryKey: ['server'] });
-      qc.invalidateQueries({ queryKey: ['overview'] });
+    if (ev === 'sync_error') {
+      qc.invalidateQueries({ queryKey: ['accounts'] });
+      qc.invalidateQueries({ queryKey: ['fleet'] });   // the shell error chip reads fleet.sync
     }
-    if (ev === 'sync_error') qc.invalidateQueries({ queryKey: ['accounts'] });
     if (ev === 'catalog_updated') qc.invalidateQueries({ queryKey: ['catalog'] });
-    if (ev === 'order') qc.invalidateQueries({ queryKey: ['orders'] });
+    if (ev === 'order') {
+      qc.invalidateQueries({ queryKey: ['orders'] });
+      qc.invalidateQueries({ queryKey: ['overview'] });        // recent orders card
+      qc.invalidateQueries({ queryKey: ['order'] });           // open detail dialog
+    }
   }, () => setStreamDown(true), () => setStreamDown(false)), [qc]);
 
   // Ctrl+K command palette

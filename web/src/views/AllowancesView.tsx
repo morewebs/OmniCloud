@@ -16,7 +16,7 @@ import TableRow from '@mui/material/TableRow';
 import Typography from '@mui/material/Typography';
 import { api, fmtTime } from '../api';
 import { usePageTitle } from '../usePageTitle';
-import type { Allowance, FleetResponse } from '../types';
+import type { Allowance } from '../types';
 import { AllowanceMeter } from '../components/AllowanceMeter';
 import { Value } from '../components/Value';
 
@@ -36,8 +36,6 @@ const COUNTING_TEXT: Record<string, string> = {
 
 export function AllowancesView() {
   usePageTitle('Billing');
-  const fleet = useQuery<FleetResponse>({ queryKey: ['fleet'],
-    queryFn: () => api<FleetResponse>('/api/fleet') });
   const billing = useQuery<{ adapter: string; currency: string; monthly_base: number;
     projected_overage: number; servers: number; price_not_exposed: boolean }[]>({
     queryKey: ['billing'], queryFn: () => api('/api/billing/summary') });
@@ -46,7 +44,7 @@ export function AllowancesView() {
   const [page, setPage] = useState(0);
   const [rowsPerPage, setRowsPerPage] = useState(25);
 
-  if (allowances.isPending || billing.isPending || fleet.isPending) {
+  if (allowances.isPending || billing.isPending) {
     return <Stack spacing={1.5}>
       <Skeleton variant="rounded" height={32} sx={{ maxWidth: 180 }} />
       {Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} variant="rounded" height={44} />)}

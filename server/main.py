@@ -31,6 +31,25 @@ def create_app() -> FastAPI:
     @app.on_event("startup")
     async def _startup() -> None:
         db.init()
+        # crash/restart recovery: anything still in-flight died with the last
+        # process - fail it visibly instead of leaving it stuck forever
+        with db.connect() as conn:
+            conn.execute("UPDATE actions SET status='failed', "
+                         "detail='interrupted by restart' WHERE status='in_progress'")
+            n_actions = conn.execute("SELECT changes()").fetchone()[0]
+            stuck = conn.execute("SELECT id FROM orders WHERE status='executing'").fetchall()
+            if stuck:
+                ts = db.now()
+                for row in stuck:
+                    conn.execute("UPDATE orders SET status='failed', updated_at=? "
+                                 "WHERE id=? AND status='executing'", (ts, row["id"]))
+                    conn.execute("INSERT INTO order_events(order_id, status, "
+                                  "detail, created_at) VALUES(?, 'failed', ?, ?)",
+                                 (row["id"], "interrupted by restart", ts))
+        if n_actions or stuck:
+            log.warning("startup recovery: %d action(s) and %d order(s) "
+                        "marked failed (interrupted by restart)",
+                        n_actions, len(stuck))
         with db.connect() as conn:
             accounts_n = conn.execute("SELECT COUNT(*) FROM accounts").fetchone()[0]
             schema_v = conn.execute("PRAGMA user_version").fetchone()[0]

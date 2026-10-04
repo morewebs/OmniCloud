@@ -290,3 +290,34 @@ async def test_billing_summary_groups_per_currency(client):
     assert curs == ["EUR", "USD"], f"mixed currencies were collapsed: {summary}"
     for s in summary:
         assert isinstance(s["monthly_base"], float)
+
+
+def test_startup_recovery_fails_stranded_inflight(client, uid):
+    """A crash (or exit-78 update) mid-action/order must not leave rows stuck
+    in_progress/executing forever - the next startup fails them visibly."""
+    from server import db
+    ts = db.now()
+    with db.connect() as conn:
+        conn.execute("INSERT INTO accounts(id, adapter, name, enabled, created_at) "
+                     "VALUES(1, 'fake', 'acct-a', 1, ?)", (ts,))
+        conn.execute(
+            "INSERT INTO actions(account_id, provider_id, kind, requested_by, "
+            "status, created_at) VALUES(1, 'fake-1', 'reboot', ?, 'in_progress', ?)",
+            (uid, ts))
+        conn.execute(
+            "INSERT INTO orders(mode, status, adapter, plan_name, location, options, "
+            "plan_snapshot, estimated_monthly, requested_by, created_at, updated_at) "
+            "VALUES('prototype', 'executing', 'fake', 'p', 'l', '{}', '{}', '{}', ?, ?, ?)",
+            (uid, ts, ts))
+    # run one startup (recovery lives in the app's startup hook)
+    from server.main import create_app
+    with TestClient(create_app()) as c2:
+        c2.get("/api/auth/status")
+    with db.connect() as conn:
+        a = conn.execute("SELECT status, detail FROM actions "
+                         "WHERE status='failed'").fetchone()
+        assert a and a["detail"] == "interrupted by restart"
+        o = conn.execute("SELECT status FROM orders WHERE status='failed'").fetchone()
+        assert o, "executing order not failed by recovery"
+        ev = conn.execute("SELECT detail FROM order_events WHERE status='failed'").fetchone()
+        assert ev and ev["detail"] == "interrupted by restart"

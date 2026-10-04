@@ -27,7 +27,7 @@ import TableRow from '@mui/material/TableRow';
 import TextField from '@mui/material/TextField';
 import Typography from '@mui/material/Typography';
 import SearchIcon from '@mui/icons-material/Search';
-import { api, fmtBytes, fmtMoney, fmtTime, post } from '../api';
+import { api, fmtBytes, fmtCurrency, fmtMoney, fmtTime, post, sumOverageByCurrency } from '../api';
 import type { AdapterInfo, FleetResponse, Server } from '../types';
 import { AllowanceMeter } from '../components/AllowanceMeter';
 import { StatusBadge } from '../components/StatusBadge';
@@ -113,15 +113,8 @@ export function FleetView() {
     const notReporting = allServers.filter(s => s.status === 'unknown').length;
     const traffic = allServers.reduce((acc, s) => acc + (s.allowance?.used_bytes ?? 0), 0);
     // overage grouped per currency - EUR and USD are never silently summed
-    const overageByCur = new Map<string, number>();
-    for (const s of allServers) {
-      const oc = s.allowance?.projected_overage_cost;
-      if (oc) overageByCur.set(oc.currency,
-        (overageByCur.get(oc.currency) ?? 0) + Number(oc.amount));
-    }
-    const overage = [...overageByCur.entries()]
-      .map(([cur, amt]) => new Intl.NumberFormat('en', { style: 'currency', currency: cur })
-        .format(amt)).join(' + ');
+    const overage = [...sumOverageByCurrency(allServers).entries()]
+      .map(([cur, amt]) => fmtCurrency(amt, cur)).join(' + ');
     return { total: allServers.length, running, notReporting, traffic, overage };
   }, [allServers]);
 

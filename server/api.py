@@ -623,6 +623,8 @@ def overview(user: auth.User = Depends(auth.require_user)):
     # spend grouped per (adapter, currency) - mixed currencies never summed
     spend: dict[str, dict[str, float]] = {}
     alerts: list[dict] = []
+    # first_seen per server - a server only costs money from the day it appeared
+    server_since: dict[str, str] = {}
     for row in rows:
         s = json.loads(row["canonical"])
         status_counts[s.get("status", "unknown")] = status_counts.get(s.get("status", "unknown"), 0) + 1
@@ -631,6 +633,12 @@ def overview(user: auth.User = Depends(auth.require_user)):
             cur = mp.get("currency", "EUR")
             spend.setdefault(s["adapter"], {}).setdefault(cur, 0.0)
             spend[s["adapter"]][cur] += float(mp["amount"])
+        # the owner's first question after "what will I pay": is anything down
+        if s.get("status") in ("off", "unknown"):
+            alerts.append({"kind": "down", "server": s.get("name", "?"),
+                           "adapter": s["adapter"],
+                           "status": s.get("status")})
+        server_since[s.get("name", "?")] = s.get("first_seen_at") or "0000"
         al = s.get("allowance") or {}
         inc, used = al.get("included_bytes"), al.get("used_bytes")
         if inc and used is not None and used / inc > 0.8:
@@ -643,15 +651,39 @@ def overview(user: auth.User = Depends(auth.require_user)):
                            "error": sr["last_error"][:200]})
 
     traffic_days = [{"day": h["day"], "bytes": h["total"]} for h in reversed(hist)]
+    # spend per day, per currency (the owner's cost-over-time; same day list as
+    # traffic_days, bucketed by first_seen so a new server doesn't backfill
+    # the whole month with its price)
+    spend_days = [{"day": d["day"],
+                   "spend": _spend_for_day(rows, server_since, d["day"])}
+                  for d in traffic_days]
     return {
         "fleet": {"total": len(rows), "by_status": status_counts},
         "spend": spend,  # {adapter: {currency: amount}}
         "projected_overage": _overage_per_currency(rows),
         "traffic_days": traffic_days,
+        "spend_days": spend_days,
         "recent_actions": [dict(a) for a in actions],
         "recent_orders": [dict(o) for o in order_rows],
         "alerts": alerts,
     }
+
+
+def _spend_for_day(rows, server_since: dict[str, str], day: str) -> dict[str, float]:
+    """Monthly spend per currency over servers that existed on `day`.
+    Per-currency only - never summed across currencies."""
+    out: dict[str, float] = {}
+    for row in rows:
+        s = json.loads(row["canonical"])
+        name = s.get("name", "?")
+        since = server_since.get(name, "0000")
+        if since and since[:10] > day:
+            continue  # server not provisioned yet on this day
+        mp = s.get("monthly_price")
+        if mp:
+            cur = mp.get("currency", "EUR")
+            out[cur] = out.get(cur, 0.0) + float(mp["amount"])
+    return out
 
 
 def _overage_per_currency(rows) -> dict[str, float]:

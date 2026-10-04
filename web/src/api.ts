@@ -101,6 +101,24 @@ export function fmtMoney(m: { amount: string; currency: string } | null | undefi
     .format(Number(m.amount));
 }
 
+export function fmtCurrency(amount: number, currency: string): string {
+  return new Intl.NumberFormat('en', { style: 'currency', currency })
+    .format(amount);
+}
+
+// sum projected-overage costs per currency - EUR and USD are never summed.
+// One helper for Fleet / Billing / Overview (was duplicated per view).
+export function sumOverageByCurrency(
+  servers: { allowance?: { projected_overage_cost?: { amount: string; currency: string } | null } | null }[],
+): Map<string, number> {
+  const out = new Map<string, number>();
+  for (const s of servers) {
+    const oc = s.allowance?.projected_overage_cost;
+    if (oc) out.set(oc.currency, (out.get(oc.currency) ?? 0) + Number(oc.amount));
+  }
+  return out;
+}
+
 // relative time ("3m ago") — the form operators scan for staleness.
 export function fmtRelative(iso: string | null | undefined): string {
   if (!iso) return '';

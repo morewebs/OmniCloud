@@ -14,7 +14,7 @@ import TableHead from '@mui/material/TableHead';
 import TablePagination from '@mui/material/TablePagination';
 import TableRow from '@mui/material/TableRow';
 import Typography from '@mui/material/Typography';
-import { api, fmtTime } from '../api';
+import { api, fmtCurrency, fmtTime, sumOverageByCurrency } from '../api';
 import { usePageTitle } from '../usePageTitle';
 import type { Allowance } from '../types';
 import { AllowanceMeter } from '../components/AllowanceMeter';
@@ -63,15 +63,9 @@ export function AllowancesView() {
   const rows = allowances.data ?? [];
   const safePage = Math.min(page, Math.max(0, Math.ceil(rows.length / rowsPerPage) - 1));
   // overage totals grouped per currency - never summed across currencies
-  const overageByCur = new Map<string, number>();
-  for (const b of billing.data ?? []) {
-    if (b.projected_overage > 0) {
-      overageByCur.set(b.currency,
-        (overageByCur.get(b.currency) ?? 0) + b.projected_overage);
-    }
-  }
-  const fmtCur = (cur: string, amt: number) =>
-    new Intl.NumberFormat('en', { style: 'currency', currency: cur }).format(amt);
+  const overageByCur = sumOverageByCurrency(
+    (allowances.data ?? []).map(r => ({ allowance: r.allowance })));
+  const fmtCur = (cur: string, amt: number) => fmtCurrency(amt, cur);
 
   return (
     <Stack spacing={3}>

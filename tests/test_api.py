@@ -235,3 +235,45 @@ def test_capabilities_409_for_absent(client, monkeypatch):
     r = client.post(f"/api/servers/{aid}/fake-1/actions", headers=HDRS,
                     json={"kind": "rebuild", "params": {"image": "x"}})
     assert r.status_code == 409
+
+
+async def test_overview_spend_days_and_down_alerts(client, uid):
+    """Owner surfaces: spend buckets by day+currency (never mixed), and a
+    down/unknown server emits a 'down' alert with the server NAME."""
+    import json as _json
+    from server import db
+    ts = db.now()
+    with db.connect() as conn:
+        conn.execute("INSERT INTO accounts(id, adapter, name, enabled, created_at) "
+                     "VALUES(1, 'fake', 'acct-a', 1, ?)", (ts,))
+        for pid, status, cur, amt, since in [
+                ("fake-1", "running", "EUR", 10.0, "2026-01-01"),
+                ("fake-2", "off", "USD", 5.0, "2026-01-15"),
+                ("fake-3", "unknown", None, None, "2026-01-01")]:
+            price = {"amount": str(amt), "currency": cur} if cur else None
+            conn.execute(
+                "INSERT INTO servers(account_id, provider_id, canonical, last_seen_at, first_seen_at) "
+                "VALUES(1, ?, ?, ?, ?)",
+                (pid, _json.dumps({
+                    "provider_id": pid, "name": f"srv-{pid}", "adapter": "fake",
+                    "account_id": 1, "status": status, "first_seen_at": since,
+                    **({"monthly_price": price} if price else {})}),
+                 ts, since))
+        # two days of traffic so spend_days has a day list to bucket over
+        for day in ("2026-01-14", "2026-01-15"):
+            conn.execute("INSERT INTO traffic_history(account_id, provider_id, day, "
+                         "bytes_used, counting) VALUES(1, 'fake-1', ?, 100, 'out')",
+                         (day,))
+    # uid fixture created admin 'ordop' directly - sign in for the session
+    client.post("/api/auth/login", json={"username": "ordop", "password": "pw123456"},
+                headers=HDRS)
+    o = client.get("/api/overview", headers=HDRS).json()
+    # down alerts carry names, not provider IDs
+    downs = [a for a in o["alerts"] if a["kind"] == "down"]
+    assert {a["server"] for a in downs} == {"srv-fake-2", "srv-fake-3"}
+    # spend_days: one entry per traffic day, per-currency, and the server
+    # that appeared on 01-15 does not backfill 01-14
+    assert [x["day"] for x in o["spend_days"]] == ["2026-01-14", "2026-01-15"]
+    assert o["spend_days"][0]["spend"].get("EUR") == 10.0
+    assert "USD" not in o["spend_days"][0]["spend"], "server backfilled before it existed"
+    assert o["spend_days"][1]["spend"] == {"EUR": 10.0, "USD": 5.0}

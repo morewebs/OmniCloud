@@ -16,7 +16,7 @@ import { PieChart } from '@mui/x-charts/PieChart';
 import { BarChart } from '@mui/x-charts/BarChart';
 import { LineChart } from '@mui/x-charts/LineChart';
 import { useTheme } from '@mui/material/styles';
-import { api, fmtBytes } from '../api';
+import { api, fmtBytes, fmtCurrency } from '../api';
 import { PageHeader } from '../components/PageHeader';
 import { usePageTitle } from '../usePageTitle';
 import { StatTile } from '../components/StatTile';
@@ -27,17 +27,14 @@ interface OverviewPayload {
   spend: Record<string, Record<string, number>>; // adapter -> currency -> amount
   projected_overage: Record<string, number>;
   traffic_days: { day: string; bytes: number }[];
+  spend_days: { day: string; spend: Record<string, number> }[];
   recent_actions: { id: number; kind: string; status: string; detail: string | null;
                     created_at: string; username: string | null }[];
   recent_orders: { id: number; status: string; adapter: string; plan_name: string;
                    estimated_monthly: string; created_at: string }[];
-  alerts: { kind: string; server?: string; adapter?: string; pct?: number;
-            account_id?: number; error?: string }[];
+  alerts: { kind: string; server?: string; adapter?: string; status?: string;
+            pct?: number; account_id?: number; error?: string }[];
 }
-
-const fmtCurrency = (amount: number, currency: string) =>
-  new Intl.NumberFormat('en', { style: 'currency', currency, maximumFractionDigits: 2 })
-    .format(amount);
 
 export function OverviewView() {
   usePageTitle('Overview');
@@ -79,7 +76,20 @@ export function OverviewView() {
   }));
 
   const overageEntries = Object.entries(d.projected_overage);
-  const worst = d.alerts.find(a => (a.pct ?? 0) >= 100) ?? d.alerts[0];
+  const downAlerts = d.alerts.filter(a => a.kind === 'down');
+  // owner's first question: what will I pay? base + projected overage, per
+  // currency, joined (never summed across currencies)
+  const overageByCur = new Map(Object.entries(d.projected_overage));
+  const bill = Object.entries(d.spend)
+    .flatMap(([, byCur]) => Object.entries(byCur))
+    .map(([cur, base]) => [cur, base + (overageByCur.get(cur) ?? 0)] as const);
+  const accountName = (id: number) =>
+    accounts.data?.find(a => a.id === id)?.name ?? `account ${id}`;
+  // non-alert pick for the summary Alert: down > allowance > sync
+  const worst = downAlerts[0]
+    ?? d.alerts.find(a => (a.pct ?? 0) >= 100)
+    ?? d.alerts.find(a => a.kind !== 'down')
+    ?? d.alerts[0];
 
   return (
     <Stack spacing={3}>
@@ -120,6 +130,25 @@ export function OverviewView() {
         </Card>
       )}
 
+      {/* the owner's two questions, first screen-inch: is anything down,
+          and what will I pay. Down outranks everything. */}
+      {downAlerts.length > 0 && (
+        <Alert severity="error" icon={false} sx={{ alignItems: 'center' }}>
+          <Stack direction="row" spacing={2} sx={{ alignItems: 'center', flexWrap: 'wrap', gap: 1 }}>
+            <Box>
+              <b>{downAlerts.length} server{downAlerts.length > 1 ? 's' : ''} need attention</b>
+              <Typography variant="body2" sx={{ color: 'text.secondary' }}>
+                {downAlerts.slice(0, 3).map(a =>
+                  `${a.server} ${a.status === 'off' ? 'is off' : 'stopped reporting'}`).join(', ')}
+                {downAlerts.length > 3 ? ` and ${downAlerts.length - 3} more` : ''}.
+                {' '}
+                <Button size="small" onClick={() => navigate('/fleet')}>Open Fleet</Button>
+              </Typography>
+            </Box>
+          </Stack>
+        </Alert>
+      )}
+
       {/* The instrument row: traffic dominates (design.md 5), fleet is a
           sentence, overage carries the one decision the operator may owe. */}
       <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} useFlexGap sx={{ gap: 2 }}>
@@ -127,6 +156,11 @@ export function OverviewView() {
                   delta={delta} sub="out, summed across synced servers"
                   dominant /* rising traffic = overage risk, not good: no deltaGood */ />
         <Stack spacing={2} sx={{ flex: 1, minWidth: 0 }}>
+          <StatTile label="This month's bill"
+                    value={bill.length
+                      ? bill.map(([cur, total]) => fmtCurrency(total, cur)).join(' + ')
+                      : '—'}
+                    sub={bill.length ? "what you'll pay about, if nothing changes" : 'no priced servers yet'} />
           <StatTile label="Fleet" value={String(d.fleet.total)} unit="servers"
                     sub={fleetSentence(d.fleet.by_status)} />
           <StatTile label="Projected overage"
@@ -138,27 +172,28 @@ export function OverviewView() {
       </Stack>
 
       {/* alerts lead the second row: the loudest thing on screen is the one
-          thing that needs a decision */}
-      {d.alerts.length > 0 && worst && (
+          thing that needs a decision (down-alerts already got their banner
+          above; this one is for allowance + sync) */}
+      {d.alerts.length > 0 && worst && worst.kind !== 'down' && (
         <Alert severity={(worst.pct ?? 0) >= 100 ? 'error' : 'warning'} icon={false}
                sx={{ alignItems: 'center' }}>
           <Stack direction="row" spacing={2} sx={{ alignItems: 'center', flexWrap: 'wrap', gap: 1 }}>
             <Box>
               {worst.kind === 'allowance'
                 ? <b>{worst.server}</b>
-                : <b>Account {worst.account_id}</b>}
+                : <b>{accountName(worst.account_id ?? 0)}</b>}
               <Typography variant="body2" sx={{ color: 'text.secondary' }}>
                 {worst.kind === 'allowance'
                   ? `at ${worst.pct}% of its traffic allowance`
                   : worst.error}
               </Typography>
             </Box>
-            {d.alerts.length > 1 && (
-              <Tooltip title={d.alerts.map(a => a.kind === 'allowance'
+            {d.alerts.length - downAlerts.length > 1 && (
+              <Tooltip title={d.alerts.filter(a => a.kind !== 'down').map(a => a.kind === 'allowance'
                 ? `${a.server} (${a.adapter}) — ${a.pct}%`
-                : `account ${a.account_id}: ${a.error}`).join('\n')}>
+                : `${accountName(a.account_id ?? 0)}: ${a.error}`).join('\n')}>
                 <Chip size="small" variant="outlined"
-                      label={`+${d.alerts.length - 1} more`} />
+                      label={`+${d.alerts.length - downAlerts.length - 1} more`} />
               </Tooltip>
             )}
           </Stack>
@@ -209,6 +244,28 @@ export function OverviewView() {
                 some providers do not expose per-server prices
               </Typography>
             )}
+          </CardContent>
+        </Card>
+
+        <Card sx={{ flex: 1.6, minWidth: { xs: 0, lg: 300 }, maxWidth: '100%' }}>
+          <CardContent>
+            <Typography variant="overline" sx={{ color: 'text.secondary' }}>Spend over time</Typography>
+            {d.spend_days.length > 1 && Object.keys(d.spend_days[0]?.spend ?? {}).length
+              ? <LineChart
+                  height={190}
+                  xAxis={[{
+                    data: d.spend_days.map(x => x.day.slice(5)),
+                    scaleType: 'point',
+                  }]}
+                  series={Object.keys(d.spend_days[0].spend).map((cur, i) => ({
+                    data: d.spend_days.map(x => x.spend[cur] ?? 0),
+                    color: SPEND_COLORS[mode][i % SPEND_COLORS[mode].length],
+                    label: `${cur}/mo`, showMark: false, curve: 'linear',
+                  }))}
+                  slotProps={axisSlotProps}
+                  hideLegend={Object.keys(d.spend_days[0].spend).length < 2}
+                />
+              : <Empty text="Spend history builds up as servers are added" />}
           </CardContent>
         </Card>
 

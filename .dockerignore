@@ -9,6 +9,7 @@ server/static
 *.db
 *.db-shm
 *.db-wal
+.env
 .claude
 .tmp-tube
 demo_server.py

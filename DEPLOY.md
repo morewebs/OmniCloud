@@ -70,7 +70,7 @@ safe as a load-balancer / watchdog probe.
 ## Updating
 
 **Built-in (git checkout installs):** Settings → Panel update. It checks
-GitHub daily and one click runs: `git pull` → `uv sync` → `npm install &&
+GitHub daily and one click runs: `git pull` → `uv sync` → `npm ci &&
 npm run build` → the process **exits with code 78**. Your supervisor
 restarts it on the new code. Configure the restart:
 

@@ -16,6 +16,21 @@ def test_version_source_of_truth():
     assert f'"version": "{version.VERSION}"' in pkg
 
 
+def test_apply_sequence_uses_npm_ci():
+    """npm install rewrites package-lock.json (npm version drift) and leaves
+    the tree dirty, breaking the NEXT apply's --ff-only pull. The sequence
+    must use npm ci (installs exactly the lockfile) and must not rely on
+    pre-restoring the lockfile to paper over it."""
+    import inspect
+    from server import update
+    src = inspect.getsource(update._apply_sequence)
+    assert '"npm", "ci"' in src, "apply must npm ci, never npm install"
+    assert "npm\", \"install" not in src
+    assert "checkout" not in src, "lockfile pre-restore is a band-aid; " \
+        "ci leaves the tree clean on its own"
+    assert '"git", "pull", "--ff-only"' in src
+
+
 def test_is_newer_semver():
     from server.update import is_newer
     assert is_newer("0.3.0", "0.2.0")

@@ -1,6 +1,6 @@
 [project]
 name = "omnicloud"
-version = "0.4.1"
+version = "0.4.2"
 description = "Open-source, multi-provider cloud control panel (Hetzner, Leaseweb first)."
 readme = "README.md"
 license = "MIT"

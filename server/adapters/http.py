@@ -101,11 +101,17 @@ class ProviderHttpClient:
             snippet = resp.text[:200].replace("\n", " ")
             raise AdapterError(
                 f"{resp.request.method} {resp.request.url.path}: "
-                f"{resp.status_code} - {snippet}"
+                f"{resp.status_code} - {snippet}",
+                status_code=resp.status_code,
             )
 
 
+HETZNER_PAGE_CAP = 25
+
+
 def iter_pages_hetzner(path: str, per_page: int = 50) -> list[tuple[str, dict]]:
-    """Hetzner paginates with page= + meta.pagination.last_page."""
-    return [(path, {"page": p, "per_page": per_page}) for p in range(1, 26)]
-    # ponytail: 25-page cap = 1250 servers; raise or loop on meta.last_page if exceeded
+    """Hetzner paginates with page= + meta.pagination.last_page. The consumer
+    breaks on last_page; if it ever exhausts this list, raise - a truncated
+    fleet is silent data loss, never a success (data honesty)."""
+    return [(path, {"page": p, "per_page": per_page})
+            for p in range(1, HETZNER_PAGE_CAP + 1)]

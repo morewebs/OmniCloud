@@ -171,12 +171,29 @@ class ProviderAdapter(ABC):
 
 
 class AdapterError(Exception):
-    """Base for adapter failures; message is safe to show in the UI."""
+    """Base for adapter failures; message is safe to show in the UI.
+    status_code (when set by the HTTP layer) lets callers distinguish
+    e.g. a real 404 from auth failures or persistent 5xx."""
+    def __init__(self, message: str, status_code: int | None = None):
+        super().__init__(message)
+        self.status_code = status_code
+
+
+def parse_dt(s: str | None) -> datetime | None:
+    """Parse a provider ISO datetime ("2026-09-01T12:34:56Z" or offset form).
+    None/unparseable -> None, never a crash over a cosmetic field."""
+    if not s:
+        return None
+    try:
+        return datetime.fromisoformat(s.replace("Z", "+00:00"))
+    except ValueError:
+        return None
 
 
 class UnsupportedAction(AdapterError):
     def __init__(self, adapter: str, cap: Capability):
-        super().__init__(f"{adapter} does not support {cap.value}")
+        super().__init__(f"{adapter} does not support {cap.value}",
+                         status_code=None)
 
 
 class ActionTimeout(AdapterError):

@@ -72,7 +72,15 @@ def create_order(user_id: int, adapter: str, plan_name: str, location: str,
 
     # Estimate: plan monthly + extra IP prices where published. Unpublished
     # IP price = partial estimate, labeled as such (never invented).
-    monthly = Decimal(plan.get("price_monthly", {}).get("amount", "0") or 0)
+    # price_monthly can be stored as null (e.g. Gcore pricing BFF down) - the
+    # default in .get() only fires when the KEY is absent, so null would raise
+    # AttributeError and 500. A plan with no price cannot be honestly estimated:
+    # refuse as a clean OrderError, never invent a 0.
+    price_monthly = plan.get("price_monthly") or {}
+    if price_monthly.get("amount") in (None, ""):
+        raise OrderError(f"plan {plan_name!r} has no published monthly price "
+                         "right now - try again after the next catalog sync")
+    monthly = Decimal(price_monthly.get("amount", "0") or 0)
     ip_price = (ip_offer.get("price") or {}).get("amount")
     currency = (plan.get("price_monthly") or {}).get("currency", "EUR")
     est = monthly

@@ -14,7 +14,7 @@ import TableHead from '@mui/material/TableHead';
 import TablePagination from '@mui/material/TablePagination';
 import TableRow from '@mui/material/TableRow';
 import Typography from '@mui/material/Typography';
-import { api, downloadFile, fmtCurrency, fmtTime, sumOverageByCurrency, toCsv } from '../api';
+import { api, downloadFile, fmtCurrency, fmtMoney, fmtTime, sumOverageByCurrency, toCsv } from '../api';
 import { usePageTitle } from '../usePageTitle';
 import type { Allowance } from '../types';
 import { AllowanceMeter } from '../components/AllowanceMeter';
@@ -50,13 +50,21 @@ export function AllowancesView() {
       {Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} variant="rounded" height={44} />)}
     </Stack>;
   }
-  if (allowances.isError) return (
+  if (allowances.isError || billing.isError) return (
     <Stack spacing={2}>
       <PageHeader title="Billing" />
-      <Alert severity="error"
-             action={<Button onClick={() => allowances.refetch()}>Retry</Button>}>
-        {(allowances.error as Error).message}
-      </Alert>
+      {allowances.isError && (
+        <Alert severity="error"
+               action={<Button onClick={() => allowances.refetch()}>Retry</Button>}>
+          {(allowances.error as Error).message}
+        </Alert>
+      )}
+      {billing.isError && (
+        <Alert severity="error"
+               action={<Button onClick={() => billing.refetch()}>Retry</Button>}>
+          Billing summary unavailable: {(billing.error as Error).message}
+        </Alert>
+      )}
     </Stack>
   );
 
@@ -154,12 +162,7 @@ export function AllowancesView() {
                   ) : '—'}
                 </TableCell>
                 <TableCell align="right">
-                  <Value
-                    value={r.allowance.projected_overage_cost
-                      ? new Intl.NumberFormat('en', { style: 'currency',
-                          currency: r.allowance.projected_overage_cost.currency })
-                          .format(Number(r.allowance.projected_overage_cost.amount)) : null}
-                  />
+                  <Value value={fmtMoney(r.allowance.projected_overage_cost)} />
                 </TableCell>
                 <TableCell align="right"><span className="num">{fmtTime(r.last_seen_at)}</span></TableCell>
               </TableRow>

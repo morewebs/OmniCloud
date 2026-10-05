@@ -19,7 +19,7 @@ import TableRow from '@mui/material/TableRow';
 import TextField from '@mui/material/TextField';
 import Tooltip from '@mui/material/Tooltip';
 import Typography from '@mui/material/Typography';
-import { api, fmtBytes, fmtCurrency, post } from '../api';
+import { api, fmtBytes, fmtCurrency, fmtMoney, post } from '../api';
 import { PageHeader } from '../components/PageHeader';
 import { EmptyState } from '../components/EmptyState';
 import { OrderDialog } from '../components/OrderDialog';
@@ -211,9 +211,7 @@ export function CatalogView() {
                       <TableCell className="num">{p.disk_gb ? `${p.disk_gb} GB` : '—'}</TableCell>
                       <TableCell align="right" className="num">
                         {p.price_monthly
-                          ? new Intl.NumberFormat('en', { style: 'currency',
-                              currency: p.price_monthly.currency, maximumFractionDigits: 2 })
-                              .format(Number(p.price_monthly.amount))
+                          ? fmtMoney(p.price_monthly)
                           : <Box component="span" sx={{ color: 'text.secondary', fontStyle: 'italic'  }}>not published</Box>}
                       </TableCell>
                       <TableCell align="right" className="num">

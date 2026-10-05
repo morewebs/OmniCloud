@@ -52,7 +52,9 @@ export function OverviewView() {
     queryFn: () => api<ActionRow[]>('/api/actions'), enabled: allActions });
   // First-run onboarding: an install with no provider accounts yet shows the
   // setup checklist (dismissed per-browser until the first account exists).
-  const onboarding = (accounts.data?.length ?? 0) === 0
+  // Must not claim "no accounts" while still fetching or on a failed fetch.
+  const onboarding = !accounts.isPending && !accounts.isError
+    && (accounts.data?.length ?? 0) === 0
     && localStorage.getItem('omnicloud-onboarded') !== '1';
 
   if (ov.isPending) return <Typography sx={{ color: 'text.secondary' }}>Loading…</Typography>;
@@ -61,8 +63,12 @@ export function OverviewView() {
 
   const trafficNow = d.traffic_days.at(-1)?.bytes ?? 0;
   const trafficPrev = d.traffic_days.at(-2)?.bytes ?? null;
-  const delta = trafficPrev && trafficPrev > 0
-    ? { text: `${trafficNow >= trafficPrev ? '+' : ''}${(((trafficNow - trafficPrev) / trafficPrev) * 100).toFixed(0)}% vs yesterday`, up: trafficNow >= trafficPrev }
+  // 0 yesterday -> any traffic today is NEW, not "no delta" (the most notable
+  // jump was hidden by a falsy-zero check); no traffic today -> no delta
+  const delta = trafficNow > 0 && trafficPrev != null
+    ? trafficPrev > 0
+      ? { text: `${trafficNow >= trafficPrev ? '+' : ''}${(((trafficNow - trafficPrev) / trafficPrev) * 100).toFixed(0)}% vs yesterday`, up: trafficNow >= trafficPrev }
+      : { text: 'new traffic — none yesterday', up: true }
     : null;
 
   const statusData = Object.entries(d.fleet.by_status).map(([label, value]) => ({
@@ -256,22 +262,29 @@ export function OverviewView() {
         <Card sx={{ flex: 1.6, minWidth: { xs: 0, lg: 300 }, maxWidth: '100%' }}>
           <CardContent>
             <Typography variant="overline" sx={{ color: 'text.secondary' }}>Spend over time</Typography>
-            {d.spend_days.length > 1 && Object.keys(d.spend_days[0]?.spend ?? {}).length
-              ? <LineChart
-                  height={190}
-                  xAxis={[{
-                    data: d.spend_days.map(x => x.day.slice(5)),
-                    scaleType: 'point',
-                  }]}
-                  series={Object.keys(d.spend_days[0].spend).map((cur, i) => ({
-                    data: d.spend_days.map(x => x.spend[cur] ?? 0),
-                    color: SPEND_COLORS[mode][i % SPEND_COLORS[mode].length],
-                    label: `${cur}/mo`, showMark: false, curve: 'linear',
-                  }))}
-                  slotProps={axisSlotProps}
-                  hideLegend={Object.keys(d.spend_days[0].spend).length < 2}
-                />
-              : <Empty text="Spend history builds up as servers are added" />}
+            {/* union currencies across ALL days - a currency first appearing
+                mid-window still gets its series (the oldest day's keys alone
+                would silently drop it) */}
+            {(() => {
+              const spendCurrencies = [...new Set(
+                d.spend_days.flatMap(x => Object.keys(x.spend)))];
+              return d.spend_days.length > 1 && spendCurrencies.length
+                ? <LineChart
+                    height={190}
+                    xAxis={[{
+                      data: d.spend_days.map(x => x.day.slice(5)),
+                      scaleType: 'point',
+                    }]}
+                    series={spendCurrencies.map((cur, i) => ({
+                      data: d.spend_days.map(x => x.spend[cur] ?? 0),
+                      color: SPEND_COLORS[mode][i % SPEND_COLORS[mode].length],
+                      label: `${cur}/mo`, showMark: false, curve: 'linear',
+                    }))}
+                    slotProps={axisSlotProps}
+                    hideLegend={spendCurrencies.length < 2}
+                  />
+                : <Empty text="Spend history builds up as servers are added" />;
+            })()}
           </CardContent>
         </Card>
 

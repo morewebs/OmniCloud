@@ -24,7 +24,6 @@ from __future__ import annotations
 
 import asyncio
 import time
-from datetime import datetime
 from decimal import Decimal
 from typing import Any
 
@@ -32,7 +31,7 @@ from . import http as phttp
 from .base import (
     ActionTimeout, ActionResult, AdapterError, Allowance, Capability, Facet,
     IpOffer, Money, Plan, ProviderAdapter, Server, ServerStatus,
-    TrafficCounting,
+    TrafficCounting, UnsupportedAction, parse_dt,
 )
 
 API = "https://api.hetzner.cloud/v1"
@@ -51,10 +50,10 @@ POLL_INTERVAL = 2.0
 _catalog: tuple[dict, float] | None = None
 CATALOG_TTL = 24 * 3600
 
-# Documented typical value (hetzner.com pricing data shows 1.00 EUR/TB net for
-# DE and US); the authoritative value is per (type, location) from the API -
-# this is only the fallback when the catalog is unavailable.
-OVERAGE_FALLBACK = Money(amount=Decimal("1.19"), currency="EUR", vat_inclusive=True)
+# Overage price: per (server_type, location) from prices[].price_per_tb_traffic
+# (provider-truth). NO fallback constant - when the catalog value is missing,
+# the overage price is not-exposed (None), never computed from a typical
+# number the provider never stated for this server.
 
 # Verified server status enum (docs.hetzner.cloud cloud.spec.json).
 STATUS_MAP = {
@@ -92,13 +91,29 @@ class HetznerAdapter(ProviderAdapter):
             last = data.get("meta", {}).get("pagination", {}).get("last_page", 1)
             if params["page"] >= last:
                 break
-        catalog = await self._catalog()
+        else:
+            # the paginator's page cap ran out while last_page said more:
+            # a truncated fleet is silent data loss - raise, never partial.
+            raise AdapterError(
+                "/servers: more pages than the pagination cap "
+                f"(last_page {last}) - refusing a truncated fleet view")
+        # The catalog join is auxiliary: a /server_types 429/5xx must not kill
+        # the fleet view - degrade to price/traffic-allowance not-exposed
+        # (monthly_price=None, included from the server object when present).
+        try:
+            catalog = await self._catalog()
+        except AdapterError:
+            catalog = {}
         return [self._server(row, catalog) for row in servers]
 
     async def get_server(self, provider_id: str) -> Server:
         data = await self.h.get_json(f"/servers/{provider_id}")
         row = data.get("server", data)  # GET /servers/{id} wraps in an envelope
-        return self._server(row, await self._catalog())
+        try:
+            catalog = await self._catalog()
+        except AdapterError:
+            catalog = {}  # auxiliary join failing must not kill the read
+        return self._server(row, catalog)
 
     async def _catalog(self) -> dict:
         """server_types.prices[] joined per (type name, location name).
@@ -126,6 +141,10 @@ class HetznerAdapter(ProviderAdapter):
             last = data.get("meta", {}).get("pagination", {}).get("last_page", 1)
             if params["page"] >= last:
                 break
+        else:
+            raise AdapterError(
+                "/server_types: more pages than the pagination cap "
+                f"(last_page {last}) - refusing a truncated catalog")
         return rows
 
     async def list_plans(self) -> list[Plan]:
@@ -175,6 +194,10 @@ class HetznerAdapter(ProviderAdapter):
             last = data.get("meta", {}).get("pagination", {}).get("last_page", 1)
             if params["page"] >= last:
                 break
+        else:
+            raise AdapterError(
+                "/images: more pages than the pagination cap "
+                f"(last_page {last}) - refusing a truncated image list")
         return out
 
     def _server(self, row: dict, catalog: dict) -> Server:
@@ -198,8 +221,8 @@ class HetznerAdapter(ProviderAdapter):
         if cat.get("price_per_tb"):
             overage_price = Money(amount=Decimal(str(cat["price_per_tb"])),
                                   currency="EUR", vat_inclusive=True)
-        elif included is not None:
-            overage_price = OVERAGE_FALLBACK
+        # no catalog value -> overage_price stays None (not exposed) - the
+        # 1.19 fallback invented a per-TB price the provider never stated.
 
         allowance = None
         if included is not None or outgoing is not None:
@@ -233,7 +256,7 @@ class HetznerAdapter(ProviderAdapter):
             ipv4=(public_net.get("ipv4") or {}).get("ip"),
             region=f"{loc} / {country}".strip(" /") or None,
             server_type=st,
-            created=_dt(row.get("created")),
+            created=parse_dt(row.get("created")),
             labels=row.get("labels") or None,
             monthly_price=(
                 Money(amount=Decimal(str(price_gross)), currency="EUR", vat_inclusive=True)
@@ -276,8 +299,26 @@ class HetznerAdapter(ProviderAdapter):
             return await self._run_action(
                 server_id, "rebuild", {"image": params["image"]}, cap=cap)
         if cap == Capability.DELETE:
-            await self.h.delete(f"/servers/{server_id}")
-            return ActionResult(detail="deleted")
+            r = await self.h.delete(f"/servers/{server_id}")
+            action = (r.json() or {}).get("action") or {}
+            if action.get("id"):
+                # DELETE returns an action like every other endpoint - poll it
+                # (a 2xx alone is never success; base protocol).
+                return await self._poll_action(int(action["id"]), "delete",
+                                                server_id,
+                                                POLL_BUDGET[Capability.DELETE])
+            # spec allows a null action: confirm gone by the provider's view
+            row = await self.h.request("GET", f"/servers/{server_id}")
+            if row.status_code == 404:
+                return ActionResult(detail="deleted")
+            raise AdapterError(
+                f"delete returned no action and server still lists ({row.status_code})")
+        # POWER family only. Anything else reaching this point (firewall) is
+        # dispatched via apply_firewall, never POST /servers/{id}/actions - a
+        # raw KeyError here would surface as an unclassified internal error.
+        if cap not in (Capability.POWER_ON, Capability.POWER_OFF,
+                       Capability.REBOOT, Capability.SHUTDOWN):
+            raise UnsupportedAction("hetzner", cap)
         kind = {Capability.POWER_ON: "poweron", Capability.POWER_OFF: "poweroff",
                 Capability.REBOOT: "reboot", Capability.SHUTDOWN: "shutdown"}[cap]
         return await self._run_action(server_id, kind, {}, cap=cap)
@@ -300,6 +341,21 @@ class HetznerAdapter(ProviderAdapter):
                     return ActionResult(detail=f"{kind} success")
                 if a.get("status") == "error":
                     raise AdapterError(f"{kind} failed: {a.get('error', {}).get('message', 'unknown error')}")
+            await asyncio.sleep(POLL_INTERVAL)
+        raise ActionTimeout(f"hetzner {kind} on server {server_id}")
+
+    async def _poll_action(self, action_id: int, kind: str, server_id: str,
+                           budget: float) -> ActionResult:
+        """Poll GET /actions/{id} to success|error - DELETE returns an action
+        too; a 2xx response alone is never success."""
+        deadline = time.monotonic() + budget
+        while time.monotonic() < deadline:
+            st = await self.h.get_json(f"/actions/{action_id}")
+            a = st.get("action", st)
+            if a.get("status") == "success":
+                return ActionResult(detail=f"{kind} success")
+            if a.get("status") == "error":
+                raise AdapterError(f"{kind} failed: {a.get('error', {}).get('message', 'unknown error')}")
             await asyncio.sleep(POLL_INTERVAL)
         raise ActionTimeout(f"hetzner {kind} on server {server_id}")
 
@@ -336,6 +392,10 @@ class HetznerAdapter(ProviderAdapter):
             last = data.get("meta", {}).get("pagination", {}).get("last_page", 1)
             if params["page"] >= last:
                 break
+        else:
+            raise AdapterError(
+                "/firewalls: more pages than the pagination cap "
+                f"(last_page {last}) - refusing a truncated firewall list")
         return out
 
     async def apply_firewall(self, server_id: str, rules: list[dict[str, Any]],
@@ -408,15 +468,6 @@ class HetznerAdapter(ProviderAdapter):
 
     async def close(self) -> None:
         await self.h.aclose()
-
-
-def _dt(s: str | None) -> datetime | None:
-    if not s:
-        return None
-    try:
-        return datetime.fromisoformat(s.replace("Z", "+00:00"))
-    except ValueError:
-        return None
 
 
 def _money(gross: str | None, vat_inclusive: bool = True) -> Money:

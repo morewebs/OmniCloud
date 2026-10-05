@@ -299,13 +299,15 @@ async def test_overview_spend_days_and_down_alerts(client, uid):
                 ("fake-1", "running", "EUR", 10.0, "2026-01-01"),
                 ("fake-2", "off", "USD", 5.0, "2026-01-15"),
                 ("fake-3", "unknown", None, None, "2026-01-01")]:
+            # production shape: first_seen_at lives ONLY in the DB column,
+            # never inside the canonical JSON (sync.py never stores it there)
             price = {"amount": str(amt), "currency": cur} if cur else None
             conn.execute(
                 "INSERT INTO servers(account_id, provider_id, canonical, last_seen_at, first_seen_at) "
                 "VALUES(1, ?, ?, ?, ?)",
                 (pid, _json.dumps({
                     "provider_id": pid, "name": f"srv-{pid}", "adapter": "fake",
-                    "account_id": 1, "status": status, "first_seen_at": since,
+                    "account_id": 1, "status": status,
                     **({"monthly_price": price} if price else {})}),
                  ts, since))
         # two days of traffic so spend_days has a day list to bucket over
@@ -326,3 +328,59 @@ async def test_overview_spend_days_and_down_alerts(client, uid):
     assert o["spend_days"][0]["spend"].get("EUR") == 10.0
     assert "USD" not in o["spend_days"][0]["spend"], "server backfilled before it existed"
     assert o["spend_days"][1]["spend"] == {"EUR": 10.0, "USD": 5.0}
+
+
+def test_overview_spend_days_keys_servers_not_names(client, uid):
+    """Identically-NAMED servers on different accounts are different rows -
+    spend-days bucketing must not collide them (first_seen is per
+    (account, provider_id), keyed off the DB column)."""
+    import json as _json
+    from server import db
+    ts = db.now()
+    with db.connect() as conn:
+        for aid, pid, since, amt in [(1, "fake-1", "2026-01-01", "10.00"),
+                                    (2, "fake-9", "2026-01-20", "5.00")]:
+            conn.execute("INSERT INTO accounts(id, adapter, name, enabled, created_at) "
+                         "VALUES(?, 'fake', ?, 1, ?)", (aid, f"acct-{aid}", ts))
+            # same NAME, different account and first_seen - the later one must
+            # not backfill the earlier day, and the earlier one must not
+            # suppress the later day
+            conn.execute(
+                "INSERT INTO servers(account_id, provider_id, canonical, last_seen_at, "
+                "first_seen_at) VALUES(?, ?, ?, ?, ?)",
+                (aid, pid, _json.dumps({
+                    "provider_id": pid, "name": "same-name", "adapter": "fake",
+                    "account_id": aid, "status": "running",
+                    "monthly_price": {"amount": amt, "currency": "EUR"}}),
+                 ts, since))
+        for day in ("2026-01-15", "2026-01-21"):
+            conn.execute("INSERT INTO traffic_history(account_id, provider_id, day, "
+                         "bytes_used, counting) VALUES(1, 'fake-1', ?, 100, 'out')",
+                         (day,))
+    client.post("/api/auth/login", json={"username": "ordop", "password": "pw123456"},
+                headers=HDRS)
+    o = client.get("/api/overview", headers=HDRS).json()
+    # before 01-20: only the first server existed; after: both
+    assert o["spend_days"][0]["spend"] == {"EUR": 10.0}
+    assert o["spend_days"][1]["spend"] == {"EUR": 15.0}
+
+
+def test_duplicate_username_409_not_500(client):
+    """POST /users with an existing username -> 409, not a UNIQUE-constraint
+    500."""
+    _admin(client)
+    r = client.post("/api/users", headers=HDRS,
+                    json={"username": "admin", "password": "pw123456"})
+    assert r.status_code == 409
+    assert "already exists" in r.json()["detail"]
+
+
+def test_settings_reject_bad_key_without_partial_write(client):
+    """A rejected settings PUT persists NOTHING - one bad key must not leave
+    the valid ones behind a 400."""
+    from server import db
+    _admin(client)
+    r = client.put("/api/settings", headers=HDRS,
+                   json={"sync_interval:1": "7", "bogus_key": "1"})
+    assert r.status_code == 400
+    assert db.get_setting("sync_interval:1") is None, "partial write leaked through"

@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import Alert from '@mui/material/Alert';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
@@ -286,6 +286,13 @@ export function CreateFirewallDialog({ open, serverName, onCreate, onClose, busy
   const [rules, setRules] = useState<FwRule[]>([
     { direction: 'in', protocol: 'tcp', port: '22', source_ips: '' },
   ]);
+  // reset on every open: a canceled draft must not silently reappear
+  useEffect(() => {
+    if (open) {
+      setName(`${serverName}-fw`);
+      setRules([{ direction: 'in', protocol: 'tcp', port: '22', source_ips: '' }]);
+    }
+  }, [open, serverName]);
 
   const set = (i: number, patch: Partial<FwRule>) =>
     setRules(rs => rs.map((r, j) => (j === i ? { ...r, ...patch } : r)));
@@ -361,12 +368,19 @@ export function CreateFirewallDialog({ open, serverName, onCreate, onClose, busy
   );
 }
 
-/** Frontend rule shape -> Hetzner API rule shape. */
+/** Frontend rule shape -> Hetzner API rule shape. Inbound rules carry
+ *  source_ips, outbound carry destination_ips (Hetzner API contract); icmp
+ *  takes no port - sending one is a 400. */
 export function toHetznerRules(rules: FwRule[]): Record<string, unknown>[] {
-  return rules.map(r => ({
-    direction: r.direction,
-    protocol: r.protocol,
-    port: r.port || undefined,
-    source_ips: r.source_ips ? r.source_ips.split(',').map(s => s.trim()).filter(Boolean) : [],
-  }));
+  return rules.map(r => {
+    const out: Record<string, unknown> = {
+      direction: r.direction,
+      protocol: r.protocol,
+    };
+    if (r.protocol !== 'icmp' && r.port) out.port = r.port;
+    const ips = r.source_ips ? r.source_ips.split(',').map(s => s.trim()).filter(Boolean) : [];
+    if (r.direction === 'in') out.source_ips = ips;
+    else out.destination_ips = ips;
+    return out;
+  });
 }

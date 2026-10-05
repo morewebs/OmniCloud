@@ -114,6 +114,12 @@ async def apply() -> dict:
     if inside.returncode != 0:
         raise RuntimeError("this install is not a git checkout - "
                            "update manually (see DEPLOY.md)")
+    # web/package-lock.json is machine-generated and safe to discard - a
+    # previous apply's npm drift (or a host-side install) may have rewritten
+    # it; restore BEFORE the dirty check or that exact scenario is refused
+    # here (commit d289a3b made the same restore unreachable this way).
+    subprocess.run(["git", "checkout", "--", "web/package-lock.json"],
+                   cwd=REPO_ROOT, capture_output=True)
     # a dirty tree would conflict with the pull
     dirty = subprocess.run(["git", "status", "--porcelain"], cwd=REPO_ROOT,
                            capture_output=True, text=True).stdout.strip()
@@ -125,11 +131,14 @@ async def apply() -> dict:
     _status["applying"] = True
     log.info("applying update to %s", _status.get("latest"))
     # quiesce: stop the sync/catalog loops and drain in-flight work so the
-    # exit can't land mid-transaction (same pattern as app shutdown)
+    # exit can't land mid-transaction (same pattern as app shutdown). The
+    # current task must not be drained - it is by definition pending while
+    # awaiting, and asyncio.wait would burn the full timeout every time.
     from . import catalog, sync
     sync.stop_all()
     catalog.stop()
-    pending = [t for t in asyncio.all_tasks() if not t.done()]
+    pending = [t for t in asyncio.all_tasks()
+               if t is not asyncio.current_task() and not t.done()]
     if pending:
         await asyncio.wait(pending, timeout=5)
     # run the steps out-of-band; the final exit can't be awaited
@@ -139,8 +148,33 @@ async def apply() -> dict:
 
 
 def _apply_sequence() -> None:
-    """Pull -> deps -> SPA build, then exit for the supervisor restart."""
+    """Pull -> deps -> SPA build, then exit for the supervisor restart.
+
+    Any failure (a failed step, or an unexpected exception like a missing
+    git/uv/npm binary) must reset _status['applying'] and RESTART the
+    sync/catalog loops that apply() stopped - otherwise the panel serves on
+    with all loops dead and every later apply is refused with 'already in
+    progress' until restart."""
     import time
+    try:
+        ok = _apply_steps()
+    except Exception as e:  # noqa: BLE001 - the apply thread must never die silently
+        log.exception("update apply crashed: %s", e)
+        _status.update(applying=False,
+                       error=f"{type(e).__name__}: {e}"[:300])
+        _restart_loops()
+        return
+    if not ok:
+        return  # the step already recorded its error + restarted the loops
+    log.info("update applied - exiting for supervisor restart")
+    # give the response a beat to flush, then exit; the supervisor restarts
+    time.sleep(1)
+    os._exit(EXIT_UPDATE)
+
+
+def _apply_steps() -> bool:
+    """Run the sequence; True = applied (caller exits), False = failed
+    (error recorded, loops restarted)."""
     for label, cmd in [
         ("git pull", ["git", "pull", "--ff-only"]),
         ("uv sync", ["uv", "sync", "--frozen", "--no-dev"]),
@@ -158,9 +192,19 @@ def _apply_sequence() -> None:
             log.error("update step '%s' failed: %s", label, r.stderr[-800:])
             _status.update(applying=False,
                            error=f"'{label}' failed - see server logs")
-            return
+            # the loops were stopped by apply()'s quiesce - bring them back
+            # (the panel keeps serving, just without a restart on new code)
+            _restart_loops()
+            return False
         log.info("update step ok: %s", label)
-    log.info("update applied - exiting for supervisor restart")
-    # give the response a beat to flush, then exit; the supervisor restarts
-    time.sleep(1)
-    os._exit(EXIT_UPDATE)
+    return True
+
+
+def _restart_loops() -> None:
+    """Re-spawn the sync/catalog loops the same way startup does. Runs in the
+    executor thread: hop onto the app loop (start_all/start create tasks)."""
+    from . import catalog, sync
+    if sync._loop is not None and sync._loop.is_running():
+        sync._loop.call_soon_threadsafe(lambda: (sync.start_all(), catalog.start()))
+    else:
+        log.error("cannot restart sync loops after failed apply - no app loop")

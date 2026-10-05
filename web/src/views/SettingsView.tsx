@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import Alert from '@mui/material/Alert';
 import Button from '@mui/material/Button';
@@ -25,13 +25,34 @@ export function SettingsView() {
   const accounts = useQuery<AccountRow[]>({ queryKey: ['accounts'],
     queryFn: () => api<AccountRow[]>('/api/accounts') });
   const [form, setForm] = useState<Record<string, string>>({});
+  // what the form looked like at the last (re)load - the dirty check's baseline
+  const lastSynced = useRef<Record<string, string> | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [toast, setToast] = useState<ToastMsg>(null);
 
   useEffect(() => {
-    if (settings.data) setForm(settings.data);
-  }, [settings.data]);
+    // sync only when the form is not dirty: a background refetch (window-focus
+    // is on) must never clobber in-progress edits. Missing interval keys are
+    // populated with the real server-side default so the shown value is the
+    // effective one and validation + save cover it.
+    setForm(f => {
+      if (lastSynced.current !== null
+          && JSON.stringify(f) !== JSON.stringify(lastSynced.current)) {
+        return f; // dirty - keep the operator's edits
+      }
+      const withDefaults = { ...settings.data! };
+      for (const a of accounts.data ?? []) {
+        const key = `sync_interval:${a.id}`;
+        if (withDefaults[key] === undefined) {
+          const def = settings.data!['sync_default_interval'];
+          if (def !== undefined) withDefaults[key] = def;
+        }
+      }
+      lastSynced.current = withDefaults;
+      return withDefaults;
+    });
+  }, [settings.data, accounts.data]);
 
   if (settings.isPending || accounts.isPending) {
     return <Stack spacing={2}>
@@ -75,7 +96,7 @@ export function SettingsView() {
     }
   };
 
-  const dirty = JSON.stringify(form) !== JSON.stringify(settings.data);
+  const dirty = JSON.stringify(form) !== JSON.stringify(lastSynced.current);
 
   return (
     <Stack spacing={3}>
@@ -92,8 +113,8 @@ export function SettingsView() {
         )}
         {accounts.data!.map(a => {
           const key = `sync_interval:${a.id}`;
-          const val = form[key] ?? '5';
-          const bad = !Number.isInteger(Number(val)) || Number(val) < 1;
+          const val = form[key] ?? '';
+          const bad = val !== '' && (!Number.isInteger(Number(val)) || Number(val) < 1);
           return (
             <TextField
               key={a.id}
@@ -112,7 +133,7 @@ export function SettingsView() {
             <Button variant="contained" onClick={save} disabled={busy || invalid}>
               {busy ? 'Saving…' : 'Save'}
             </Button>
-            <Button onClick={() => setForm(settings.data!)} disabled={busy || !dirty}>
+            <Button onClick={() => setForm(lastSynced.current ?? {})} disabled={busy || !dirty}>
               Reset
             </Button>
           </Stack>
@@ -198,6 +219,12 @@ function ApiTokensPanel({ onToast }: { onToast: (m: string, s?: 'success' | 'err
           </Button>
         </Stack>
       ))}
+      {tokens.isError && (
+        <Alert severity="error"
+               action={<Button size="small" onClick={() => tokens.refetch()}>Retry</Button>}>
+          Token list unavailable: {(tokens.error as Error).message}
+        </Alert>
+      )}
       {tokens.data?.length === 0 && (
         <Typography variant="caption" sx={{ color: 'text.secondary' }}>
           no tokens yet
@@ -249,6 +276,17 @@ function UpdatePanel({ onToast }: { onToast: (m: string, s?: 'success' | 'error'
   const qc = useQueryClient();
   const [applying, setApplying] = useState(false);
   if (u.isPending) return null;
+  // a failed status query must never fall through to u.data! (undefined ->
+  // render throw -> app-wide ErrorBoundary replaces the whole dashboard)
+  if (u.isError) return (
+    <Stack spacing={1.5} sx={{ maxWidth: 560 }}>
+      <Typography variant="subtitle1">Panel update</Typography>
+      <Alert severity="error"
+             action={<Button onClick={() => u.refetch()}>Retry</Button>}>
+        Update status unavailable: {(u.error as Error).message}
+      </Alert>
+    </Stack>
+  );
   const d = u.data!;
   const available = d.available;  // server-side semver compare, not string !=
   return (

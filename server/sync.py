@@ -63,12 +63,16 @@ def unsubscribe(q: asyncio.Queue) -> None:
 
 # -- sync loop ---------------------------------------------------------------
 
-async def _sync_once(account: dict, adapter: ProviderAdapter) -> None:
+async def _sync_once(account: dict, adapter: ProviderAdapter) -> list[dict]:
+    """One provider pass into the cache. Returns the fresh canonical rows
+    (run_action reuses them as the action's after-state)."""
     servers = await adapter.list_servers()
+    rows = []
     ts = db.now()
     with db.connect() as conn:
         for s in servers:
             row = s.model_dump(mode="json")
+            rows.append(row)
             conn.execute(
                 """INSERT INTO servers(account_id, provider_id, canonical, first_seen_at, last_seen_at)
                    VALUES(?,?,?,?,?)
@@ -95,6 +99,7 @@ async def _sync_once(account: dict, adapter: ProviderAdapter) -> None:
             (ts, ts, account["id"]),
         )
     publish("servers_updated", {"account_id": account["id"]})
+    return rows
 
 
 async def sync_account_now(account_id: int) -> dict:
@@ -105,8 +110,8 @@ async def sync_account_now(account_id: int) -> dict:
         raise ValueError("no such account")
     adapter = accounts.build_adapter(account)
     try:
-        await _sync_once(account, adapter)
-        return {"ok": True}
+        rows = await _sync_once(account, adapter)
+        return {"ok": True, "servers": rows}
     except Exception as e:  # noqa: BLE001
         msg = f"{type(e).__name__}: {e}"[:500]
         with db.connect() as conn:
@@ -201,7 +206,13 @@ def restart_account(account_id: int) -> None:
 def stop_account(account_id: int) -> None:
     t = _tasks.pop(account_id, None)
     _sync_events.pop(account_id, None)
-    if t:
+    if not t:
+        return
+    # Task.cancel from off the event loop (threadpool routes are sync `def`)
+    # is not thread-safe - hop onto the app loop like _spawn does.
+    if _loop is not None and _loop.is_running():
+        _loop.call_soon_threadsafe(t.cancel)
+    else:
         t.cancel()
 
 
@@ -210,10 +221,15 @@ def stop_all() -> None:
         stop_account(aid)
 
 
-def request_sync(account_id: int) -> None:
+def request_sync(account_id: int) -> bool:
+    """Wake the account's loop for an immediate sync. False = no live loop
+    (account disabled or deleted), so the caller can 409 instead of
+    pretending a refresh happened."""
     ev = _sync_events.get(account_id)
     if ev:
         ev.set()
+        return True
+    return False
 
 
 # -- action runner ------------------------------------------------------------
@@ -249,15 +265,25 @@ async def run_action(account_id: int, provider_id: str, kind: str,
             with contextlib.suppress(Exception):
                 await adapter.close()
         after = None
-        if cap is not Capability.DELETE:
-            try:
-                a2 = accounts.build_adapter(account)
-                fresh = await a2.get_server(provider_id)
-                after = fresh.model_dump(mode="json")
-                with contextlib.suppress(Exception):
-                    await a2.close()
-            except Exception:  # noqa: BLE001 - after-state is best-effort
-                pass
+        if cap is Capability.DELETE:
+            # Deferred delete (Leaseweb MONTHLY: "delete scheduled at contract
+            # end") - the instance still exists and bills until contract end;
+            # keep the cache row, the next sync removes it when the provider
+            # actually drops it. Only prune when the delete is confirmed gone.
+            deferred = "scheduled" in (result.detail or "")
+            if not deferred:
+                with db.connect() as conn:
+                    conn.execute(
+                        "DELETE FROM servers WHERE account_id=? AND provider_id=?",
+                        (account_id, provider_id),
+                    )
+        else:
+            # after-state comes from the forced sync (one full list_servers),
+            # not a second adapter + get_server
+            with contextlib.suppress(Exception):
+                rows = await sync_account_now(account_id)
+                after = next((r for r in rows.get("servers", [])
+                              if r.get("provider_id") == provider_id), None)
         with db.connect() as conn:
             conn.execute(
                 "UPDATE actions SET status='done', completed_at=?, detail=? WHERE id=?",
@@ -265,15 +291,6 @@ async def run_action(account_id: int, provider_id: str, kind: str,
             )
         audit.record(user_id, kind, f"{account['adapter']}/{account['name']}/{provider_id}",
                      before=before, after=after)
-        if cap is Capability.DELETE:
-            with db.connect() as conn:
-                conn.execute(
-                    "DELETE FROM servers WHERE account_id=? AND provider_id=?",
-                    (account_id, provider_id),
-                )
-        else:
-            with contextlib.suppress(Exception):
-                await sync_account_now(account_id)
         publish("action", {"account_id": account_id, "kind": kind, "status": "done"})
         return action_id
     except Exception as e:  # noqa: BLE001

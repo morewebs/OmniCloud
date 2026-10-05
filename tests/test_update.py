@@ -20,14 +20,17 @@ def test_apply_sequence_uses_npm_ci():
     """npm install rewrites package-lock.json (npm version drift) and leaves
     the tree dirty, breaking the NEXT apply's --ff-only pull. The sequence
     must use npm ci (installs exactly the lockfile) and must not rely on
-    pre-restoring the lockfile to paper over it."""
+    pre-restoring the lockfile INSIDE the sequence to paper over it (the
+    pre-flight restore in apply() is a different, deliberate guard: it runs
+    BEFORE the dirty check, which the sequence's own restore was too late
+    for)."""
     import inspect
     from server import update
-    src = inspect.getsource(update._apply_sequence)
+    src = inspect.getsource(update._apply_steps)
     assert '"npm", "ci"' in src, "apply must npm ci, never npm install"
     assert "npm\", \"install" not in src
-    assert "checkout" not in src, "lockfile pre-restore is a band-aid; " \
-        "ci leaves the tree clean on its own"
+    assert "checkout" not in src, "lockfile pre-restore in the sequence is a " \
+        "band-aid; ci leaves the tree clean on its own"
     assert '"git", "pull", "--ff-only"' in src
 
 

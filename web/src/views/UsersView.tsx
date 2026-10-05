@@ -169,7 +169,7 @@ function AddUserDialog({ onClose, onDone }: { onClose: () => void; onDone: () =>
   const submit = async () => {
     setBusy(true); setError(null);
     try {
-      await post('/api/users', { username, password, role });
+      await post('/api/users', { username: username.trim(), password, role });
       onDone();
     } catch (e) {
       setError((e as Error).message);
@@ -206,7 +206,7 @@ function AddUserDialog({ onClose, onDone }: { onClose: () => void; onDone: () =>
       </DialogContent>
       <DialogActions>
         <Button onClick={onClose} disabled={busy}>Cancel</Button>
-        <Button variant="contained" disabled={busy || !username || password.length < 8}
+        <Button variant="contained" disabled={busy || !username.trim() || password.length < 8}
                 onClick={submit}>
           {busy ? 'Adding…' : 'Add'}
         </Button>

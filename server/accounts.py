@@ -64,6 +64,14 @@ def create_account(adapter: str, name: str, token: str, scope: str | None = None
 
 def delete_account(account_id: int) -> bool:
     with db.connect() as conn:
+        # orders are the operator's legal trail (kept forever - see the
+        # retention sweeper) and their account_id is deliberately NOT ON
+        # DELETE CASCADE, so an account with orders would hit the FK and be
+        # undeletable. Detach the reference instead: the order history
+        # survives (account_id NULL), the account and its credentials/
+        # servers/actions rows go.
+        conn.execute("UPDATE orders SET account_id=NULL WHERE account_id=?",
+                     (account_id,))
         cur = conn.execute("DELETE FROM accounts WHERE id=?", (account_id,))
         return cur.rowcount > 0
 

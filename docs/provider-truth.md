@@ -277,10 +277,14 @@ docs.gcore.com developer-tools REST API docs)
 - `name` is a **flat** field. `flavor` is **nested**:
   `flavor_id/flavor_name/vcpus/ram` (ram in **MiB**) — no top-level flavor_id.
 - `addresses`: map network-name → `[{addr, type}]`; the public IP is the
-  `type: "floating"` entry (`InstanceFloatingAddressSerializer`).
+  `type: "floating"` entry (`InstanceFloatingAddressSerializer`). A `fixed`
+  addr cannot be told public from private (network names are user-chosen) —
+  the panel renders floating only, never a guessed fixed addr.
 - `created_at` (not `created`); `status` (uppercase OpenStack-style enum)
   AND `vm_state` (lowercase) both present — panel maps `status`.
-- `tags`: `[{key, value, read_only}]` → labels.
+- `tags`: `[{key, value, read_only}]` → labels; `read_only: true` tags are
+  provider metadata (merge patch always preserves them) → facets, not
+  labels.
 - Status enum: ACTIVE, BUILD, DELETED, ERROR, HARD_REBOOT, MIGRATING,
   PASSWORD, PAUSED, REBOOT, REBUILD, RESCUE, RESIZE, REVERT_RESIZE, SHELVED,
   SHELVED_OFFLOADED, SHUTOFF, SOFT_DELETED, SUSPENDED, UNKNOWN, VERIFY_RESIZE.
@@ -296,7 +300,9 @@ docs.gcore.com developer-tools REST API docs)
   power actions are confirmed on the instance's own `status`
   (ACTIVE/SHUTOFF).
 - Rename/relabel: `PATCH /cloud/v1/instances/{p}/{r}/{id}` accepts `name`
-  and `tags` (RFC 7386 JSON Merge Patch), 200 + serializer — confirmed by
+  and `tags` (RFC 7386 JSON Merge Patch: `key: value` adds/updates,
+  `key: null` removes, `tags: null` clears all user tags; unspecified keys
+  and read-only tags are always preserved), 200 + serializer — confirmed by
   the returned name/tags.
 - Delete: `DELETE ...` returns **200** with `{"tasks":[...]}` (NOT 204);
   confirmed gone only when the instance GET 404s.

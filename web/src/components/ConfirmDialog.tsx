@@ -16,7 +16,7 @@ import TextField from '@mui/material/TextField';
  */
 export function ConfirmDialog({
   open, title, serverName, body, requireTyped, confirming, error,
-  onConfirm, onClose, confirmLabel, children,
+  confirmDisabled, onConfirm, onClose, confirmLabel, children,
 }: {
   open: boolean;
   title: string;
@@ -25,6 +25,8 @@ export function ConfirmDialog({
   requireTyped?: boolean;
   confirming?: boolean;
   error?: string | null;
+  /** extra gate beyond the typed-name check (e.g. rebuild needs a picked image) */
+  confirmDisabled?: boolean;
   onConfirm: () => void;
   onClose: () => void;
   confirmLabel?: string;
@@ -67,7 +69,7 @@ export function ConfirmDialog({
           onClick={onConfirm}
           color="error"
           variant="contained"
-          disabled={!ready || confirming}
+          disabled={!ready || confirming || confirmDisabled}
         >
           {confirming ? busyLabel : (confirmLabel ?? 'Confirm')}
         </Button>

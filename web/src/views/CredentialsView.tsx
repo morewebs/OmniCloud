@@ -198,12 +198,15 @@ function AddAccountDialog({ adapters, onClose, onDone }: {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [showToken, setShowToken] = useState(false);
-  const effAdapter = adapter || list[0]?.key || '';
+  // cred-capable adapters only (a.source = catalog-only source) - the menu
+  // offers exactly these; the default must be one of them, never a blank select
+  const credList = list.filter(a => !a.source);
+  const effAdapter = adapter || credList[0]?.key || '';
 
   const submit = async () => {
     setBusy(true); setError(null);
     try {
-      await post('/api/accounts', { adapter: effAdapter, name, token });
+      await post('/api/accounts', { adapter: effAdapter, name: name.trim(), token: token.trim() });
       onDone();
     } catch (e) {
       setError((e as Error).message);
@@ -221,7 +224,7 @@ function AddAccountDialog({ adapters, onClose, onDone }: {
                      onChange={e => setAdapter(e.target.value)} size="small" required
                      disabled={adapters.isPending}>
             {adapters.isPending && <MenuItem value="" disabled>Loading providers…</MenuItem>}
-            {list.filter(a => !a.source).map(a =>
+            {credList.map(a =>
               <MenuItem key={a.key} value={a.key}>{a.display_name}</MenuItem>)}
           </TextField>
           {effAdapter === 'hetzner' && (
@@ -273,7 +276,7 @@ function AddAccountDialog({ adapters, onClose, onDone }: {
       <DialogActions>
         <Button onClick={onClose} disabled={busy}>Cancel</Button>
         <Button variant="contained"
-                disabled={busy || !effAdapter || !name || !token || adapters.isPending}
+                disabled={busy || !effAdapter || !name.trim() || !token.trim() || adapters.isPending}
                 onClick={submit}>{busy ? 'Adding…' : 'Add'}</Button>
       </DialogActions>
     </Dialog>

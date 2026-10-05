@@ -70,16 +70,17 @@ async def test_status_map_honest():
     await a.close()
 
 
-async def test_ipv4_floating_preferred_fixed_fallback():
-    """Public IPv4 = the type:"floating" address; a fixed external addr is
-    the fallback (db instance has only a fixed one); no addresses at all ->
-    None, never invented."""
+async def test_ipv4_floating_only_never_private_fixed():
+    """Public IPv4 = the type:"floating" address ONLY. A fixed addr cannot
+    be told public from private (the addresses map keys are user-named
+    networks, and 10.x/172.16.x/192.168.x are private) - returning one as
+    the public IP would be a guess; None, never invented."""
     transport, _, _ = mock_gcore_transport()
     a = make_adapter(transport)
     servers = await a.list_servers()
     by_pid = {s.provider_id: s for s in servers}
     assert by_pid[WEB_PID].ipv4 == "203.0.113.10"      # floating
-    assert by_pid[DB_PID].ipv4 == "198.51.100.20"      # fixed fallback
+    assert by_pid[DB_PID].ipv4 is None   # only a fixed addr - not provably public
     assert by_pid[EDGE_PID].ipv4 is None               # empty addresses map
     await a.close()
 
@@ -240,14 +241,32 @@ async def test_rename_patch_confirmed_by_provider():
 
 
 async def test_relabel_patch_tags():
-    """Relabel = PATCH {"tags": {...}} (RFC 7386 merge patch); confirmed by
-    re-reading the instance's tags."""
+    """Relabel = PATCH {"tags": {...}} (RFC 7386 merge patch): unspecified
+    keys would be preserved by the provider, so the adapter must send null
+    removals for keys the UI's desired set drops; confirmed by re-reading."""
     transport, _, _ = mock_gcore_transport()
     a = make_adapter(transport)
+    # web starts with {"env": "demo", "team": "edge"}; the UI's full desired
+    # set drops "team" - the adapter must null it, or the provider keeps it
     await a.perform_action(Capability.RELABEL, WEB_PID,
                             {"labels": {"env": "prod"}})
     s = await a.get_server(WEB_PID)
     assert s.labels == {"env": "prod"}
+    await a.close()
+
+
+async def test_read_only_tags_are_facets_not_labels():
+    """Read-only tags (the provider's own metadata - a merge patch always
+    preserves them) must render as facets, not labels the UI would offer
+    for editing."""
+    transport, _, _ = mock_gcore_transport()
+    a = make_adapter(transport)
+    servers = await a.list_servers()
+    web = next(s for s in servers if s.provider_id == WEB_PID)
+    assert web.labels == {"env": "demo", "team": "edge"}, \
+        "fixture tags are all editable (read_only: false)"
+    labels = web.labels or {}
+    assert all(not k.startswith("gcore") for k in labels)
     await a.close()
 
 

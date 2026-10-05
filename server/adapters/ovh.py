@@ -27,7 +27,7 @@ from . import http as phttp
 from .base import (
     ActionTimeout, ActionResult, AdapterError, Allowance, Capability,
     Facet, IpOffer, Money, Plan, ProviderAdapter, Server, ServerStatus,
-    TrafficCounting,
+    TrafficCounting, parse_dt,
 )
 
 API = "https://eu.api.ovh.com/1.0"
@@ -230,7 +230,7 @@ class OvhAdapter(ProviderAdapter):
             ipv4=ipv4,
             region=row.get("zone"),
             server_type=str(model.get("name") or row.get("offerType") or ""),
-            created=_dt(infos.get("creation")),
+            created=parse_dt(infos.get("creation")),
             labels=None,  # only IAM tags exist (computed, not free-form)
             monthly_price=None,  # the /vps API carries no price at all
             allowance=None,      # unmetered product - no usage endpoint
@@ -284,7 +284,7 @@ class OvhAdapter(ProviderAdapter):
             ipv4=ipv4,
             region=region,
             server_type=str(flavor.get("name") or row.get("flavorId") or ""),
-            created=_dt(row.get("created")),
+            created=parse_dt(row.get("created")),
             labels=None,
             monthly_price=price,
             allowance=allowance,
@@ -312,8 +312,7 @@ class OvhAdapter(ProviderAdapter):
                 rows = await self.h.get_json(
                     f"/cloud/project/{project}/region/{region}/instance")
             except AdapterError:
-                cache[key] = {}  # price unavailable = None, never a guess
-                return None
+                return None  # not cached: a blip = one missed price, not a day
             prices: dict[str, Money] = {}
             for r in rows:
                 for pr in r.get("pricings") or []:
@@ -395,8 +394,13 @@ class OvhAdapter(ProviderAdapter):
             while time.monotonic() < deadline:
                 try:
                     row = await self.h.get_json(base)
-                except AdapterError:
-                    return ActionResult(detail="deleted (instance gone)")
+                except AdapterError as e:
+                    # Only a real 404 confirms deletion. An auth failure or
+                    # persistent 5xx re-raises - treating any error as
+                    # "deleted" would hide real failures as successes.
+                    if e.status_code == 404:
+                        return ActionResult(detail="deleted (instance gone)")
+                    raise
                 if str(row.get("status", "")).startswith("DELETED"):
                     return ActionResult(detail="deleted")
                 await asyncio.sleep(POLL_INTERVAL)
@@ -406,13 +410,15 @@ class OvhAdapter(ProviderAdapter):
                 Capability.REBOOT: "reboot", Capability.SHUTDOWN: "stop"}[cap]
         body = {"type": "soft"} if verb == "reboot" else {}
         await self.h.post_json(f"{base}/{verb}", body)
-        want = "ACTIVE" if verb in ("start", "reboot") else "SHUTOFF"
+        # stop lands in SHUTOFF or STOPPED (both map to OFF on the read
+        # side, CLOUD_STATUS_MAP) - accept either, never just one.
+        want = ("ACTIVE",) if verb in ("start", "reboot") else ("SHUTOFF", "STOPPED")
         deadline = time.monotonic() + POLL_BUDGET_POWER
         last = ""
         while time.monotonic() < deadline:
             row = await self.h.get_json(base)
             last = str(row.get("status", ""))
-            if last == want:
+            if last in want:
                 return ActionResult(detail=f"status now {last}")
             await asyncio.sleep(POLL_INTERVAL)
         raise ActionTimeout(f"OVH {verb} on instance {sid} (last status {last})")
@@ -426,15 +432,6 @@ class OvhAdapter(ProviderAdapter):
     async def close(self) -> None:
         await self.h.aclose()
         await self._raw.aclose()
-
-
-def _dt(s: str | None) -> datetime | None:
-    if not s:
-        return None
-    try:
-        return datetime.fromisoformat(s.replace("Z", "+00:00"))
-    except ValueError:
-        return None
 
 
 def _next_month_utc() -> datetime:
@@ -520,12 +517,15 @@ class OvhCatalogAdapter(ProviderAdapter):
     @staticmethod
     def _monthly_price(pricings: list[dict]) -> Decimal | None:
         """First monthly-renew pricing (micro-cents int -> EUR decimal,
-        quantized to 2 places so 580000000 renders as 5.80, not 5.8)."""
+        quantized to 2 places so 580000000 renders as 5.80, not 5.8).
+        A pricing without a price is skipped - publishing 0.00 would be an
+        invented price, and callers already treat None as not-sold."""
         for pr in pricings:
             if ("renew" in (pr.get("capacities") or [])
                     and pr.get("interval") == 1
-                    and pr.get("intervalUnit") == "month"):
-                return (Decimal(str(pr.get("price", 0))) / Decimal(10**8)).quantize(Decimal("0.01"))
+                    and pr.get("intervalUnit") == "month"
+                    and pr.get("price") is not None):
+                return (Decimal(str(pr["price"])) / Decimal(10**8)).quantize(Decimal("0.01"))
         return None
 
     @staticmethod

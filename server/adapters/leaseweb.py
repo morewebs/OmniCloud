@@ -35,7 +35,7 @@ from . import http as phttp
 from .base import (
     ActionTimeout, ActionResult, AdapterError, Allowance, Capability, Facet,
     IpOffer, Money, Plan, ProviderAdapter, Server, ServerStatus,
-    TrafficCounting,
+    TrafficCounting, parse_dt,
 )
 
 API = "https://api.leaseweb.com/publicCloud/v1"
@@ -51,6 +51,10 @@ STATE_MAP = {
     "DESTROYED": ServerStatus.OFF,
     "FAILED": ServerStatus.UNKNOWN,
     "UNKNOWN": ServerStatus.UNKNOWN,
+    # Monthly-contract termination: the instance keeps RUNNING until contract
+    # end (docs). OFF/UNKNOWN would be a false 'down' alert - it is not down.
+    # Least-wrong given the enum: still running, deletion deferred.
+    "DELETE_SCHEDULED": ServerStatus.RUNNING,
 }
 
 POLL_BUDGET = {
@@ -81,8 +85,13 @@ ACCOUNT_ALLOWANCE_NOTE = "included per account, not per instance"
 # reasonCode required for MONTHLY-contract termination (docs: terminateInstance).
 DELETE_REASON_CODE = "TERMINATED_BY_CUSTOMER"
 
-_instance_types: dict[float, dict[str, dict]] = {}  # monotonic-ts -> {type_name: {monthly, hourly}}
+# (region, type_name) -> {monthly, hourly}, fetched per region - prices are
+# per-region, so a name-only key would poison every other region (and every
+# account) with the first region's prices. Keyed like OVH's _region_pricings.
+# A fetch failure is NOT cached: one blip must not blank prices for the TTL.
+_instance_types: dict[tuple[str, str], dict] = {}
 TYPES_TTL = 24 * 3600
+_instance_types_ts: dict[str, float] = {}  # region -> monotonic fetch time
 
 
 class LeasewebAdapter(ProviderAdapter):
@@ -160,7 +169,7 @@ class LeasewebAdapter(ProviderAdapter):
             ipv4=ipv4,
             region=region,
             server_type=itype,
-            created=_dt(row.get("startedAt")),
+            created=parse_dt(row.get("startedAt")),
             labels=None,
             monthly_price=price,
             allowance=allowance,
@@ -189,27 +198,19 @@ class LeasewebAdapter(ProviderAdapter):
 
     async def _price_for(self, region: str | None, itype: str | None) -> Money | None:
         """Per-instance monthly price via GET /instanceTypes?region= - not on
-        the instance object itself."""
+        the instance object itself. Cached per (region, type); a failed fetch
+        is not cached (a blip = one missed price, not a day of them)."""
         if not region or not itype:
             return None
-        cache = _instance_types.get("t")
-        ts = _instance_types.get("ts", 0)
-        if cache is None or time.monotonic() - ts > TYPES_TTL:
-            cache = {}
+        if time.monotonic() - _instance_types_ts.get(region, 0) > TYPES_TTL:
             try:
                 data = await self.h.get_json("/instanceTypes", params={"region": region})
-                for t in data.get("instanceTypes", []):
-                    cache[t.get("name", "")] = t.get("prices") or {}
             except AdapterError:
-                _instance_types.clear()
-                _instance_types["t"] = {}
-                _instance_types["ts"] = time.monotonic()
-                return None
-            _instance_types.clear()
-            _instance_types["t"] = cache
-            _instance_types["ts"] = time.monotonic()
-        prices = (cache or {}).get(itype, {})
-        monthly = prices.get("monthly")
+                return None  # never cache a failure for the TTL
+            for t in data.get("instanceTypes", []):
+                _instance_types[(region, t.get("name", ""))] = t.get("prices") or {}
+            _instance_types_ts[region] = time.monotonic()
+        monthly = (_instance_types.get((region, itype)) or {}).get("monthly")
         if monthly is None:
             return None
         return Money(amount=Decimal(str(monthly)), currency="EUR", vat_inclusive=None)
@@ -265,12 +266,11 @@ class LeasewebAdapter(ProviderAdapter):
         return plans
 
     async def _regions(self) -> list[str]:
-        try:
-            data = await self.h.get_json("/regions")
-            return [r.get("name", "") for r in data.get("regions", []) if r.get("name")]
-        except AdapterError:
-            # common known set as fallback; regions endpoint verified at impl time
-            return ["eu-west-3"]
+        # A regions-endpoint outage must NOT become a one-region catalog
+        # stored as a fresh full success. Raise like a per-region failure:
+        # the error-recording path then keeps the previous catalog.
+        data = await self.h.get_json("/regions")
+        return [r.get("name", "") for r in data.get("regions", []) if r.get("name")]
 
     async def list_images(self) -> list[dict]:
         """Orderable images: GET /images with PUBLIC availability."""
@@ -345,15 +345,6 @@ class LeasewebAdapter(ProviderAdapter):
 
     async def close(self) -> None:
         await self.h.aclose()
-
-
-def _dt(s: str | None) -> datetime | None:
-    if not s:
-        return None
-    try:
-        return datetime.fromisoformat(s.replace("Z", "+00:00"))
-    except ValueError:
-        return None
 
 
 def _next_month_utc() -> datetime:

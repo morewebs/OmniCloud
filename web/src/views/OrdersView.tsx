@@ -45,8 +45,13 @@ export function OrdersView() {
   const isAdmin = me.data?.role === 'admin';
   const [detailId, setDetailId] = useState<number | null>(null);
   const [toast, setToast] = useState<ToastMsg>(null);
+  // one order action in flight at a time: a double-click must not fire
+  // duplicate confirm/cancel/execute mutations
+  const [actBusy, setActBusy] = useState<number | null>(null);
 
   const act = async (id: number, verb: string) => {
+    if (actBusy != null) return;
+    setActBusy(id);
     try {
       await post(`/api/orders/${id}/${verb}`);
       qc.invalidateQueries({ queryKey: ['orders'] });
@@ -54,6 +59,8 @@ export function OrdersView() {
       setToast({ message: `Order ${PAST[verb] ?? verb + 'ed'}`, severity: 'success' });
     } catch (e) {
       setToast({ message: (e as Error).message, severity: 'error' });
+    } finally {
+      setActBusy(null);
     }
   };
 
@@ -120,17 +127,17 @@ export function OrdersView() {
                         <Stack direction="row" spacing={1} sx={{ justifyContent: 'flex-end' }}>
                           {o.status === 'draft' && (
                             <>
-                              <Button size="small" variant="outlined"
+                              <Button size="small" variant="outlined" disabled={actBusy === o.id}
                                       onClick={() => act(o.id, 'confirm')}>Confirm</Button>
-                              <Button size="small" color="error"
+                              <Button size="small" color="error" disabled={actBusy === o.id}
                                       onClick={() => act(o.id, 'cancel')}>Cancel</Button>
                             </>
                           )}
                           {o.status === 'confirmed' && (
                             <>
-                              <Button size="small" variant="contained"
+                              <Button size="small" variant="contained" disabled={actBusy === o.id}
                                       onClick={() => act(o.id, 'execute')}>Execute</Button>
-                              <Button size="small" color="error"
+                              <Button size="small" color="error" disabled={actBusy === o.id}
                                       onClick={() => act(o.id, 'cancel')}>Cancel</Button>
                             </>
                           )}

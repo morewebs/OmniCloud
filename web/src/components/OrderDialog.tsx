@@ -10,7 +10,7 @@ import MenuItem from '@mui/material/MenuItem';
 import Stack from '@mui/material/Stack';
 import TextField from '@mui/material/TextField';
 import Typography from '@mui/material/Typography';
-import { api, post } from '../api';
+import { api, fmtCurrency, post } from '../api';
 import type { Plan } from '../types';
 
 /**
@@ -138,8 +138,7 @@ export function OrderDialog({ plan, onClose, onDone }: {
               <Typography variant="body2" sx={{ color: 'text.secondary' }}>Estimated monthly</Typography>
               <Stack sx={{ textAlign: 'right' }}>
                 <Typography className="num" variant="body2" sx={{ fontWeight: 600 }}>
-                  {new Intl.NumberFormat('en', { style: 'currency', currency: estimate.currency })
-                    .format(estimate.total)}
+                  {fmtCurrency(estimate.total, estimate.currency)}
                 </Typography>
                 {estimate.partial && (
                   <Typography variant="caption" sx={{ color: 'warning.main' }}>

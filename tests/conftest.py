@@ -116,6 +116,8 @@ def mock_leaseweb_transport():
                 {"name": "lsw.m3.medium", "prices": {"hourly": "0.02", "monthly": "14.90"}},
                 {"name": "lsw.m3.small", "prices": {"hourly": "0.01", "monthly": "8.40"}},
             ]})
+        if path.endswith("/regions"):
+            return httpx.Response(200, json={"regions": [{"name": "eu-west-3"}]})
         if "/instances/" in path and request.method == "GET":
             data = fixture("leaseweb/instances_p1.json")["instances"]
             row = dict(next((i for i in data if i["id"] in path), data[0]))
@@ -359,10 +361,23 @@ def mock_gcore_transport():
                 if "name" in body:
                     patches[iid]["name"] = body["name"]
                 if "tags" in body:
-                    # RFC 7386 merge patch: full tags list replace
-                    patches[iid]["tags"] = [
-                        {"key": k, "value": v, "read_only": False}
-                        for k, v in body["tags"].items()]
+                    # RFC 7386 merge patch (spec UpdateTagsSerializer):
+                    # key:value adds/updates, null removes the key, "tags":
+                    # null clears all user tags; unspecified keys and
+                    # read-only tags are always preserved.
+                    if body["tags"] is None:
+                        body["tags"] = {}
+                    base_row = _row(iid)
+                    current = ({t["key"]: t for t in base_row["tags"]}
+                               if base_row else {})
+                    merged = {k: dict(t) for k, t in current.items()}
+                    for k, v in body["tags"].items():
+                        if v is None:
+                            merged.pop(k, None)
+                        else:
+                            merged[k] = {"key": k, "value": v,
+                                         "read_only": False}
+                    patches[iid]["tags"] = list(merged.values())
                 row = _row(iid)
                 if row is None:
                     return httpx.Response(404, json={"message": "no instance"})

@@ -90,7 +90,9 @@ export function fmtBytes(n: number | null | undefined): string {
   if (n == null) return '';
   const units = ['B', 'KB', 'MB', 'GB', 'TB', 'PB'];
   let v = n, i = 0;
-  while (v >= 1000 && i < units.length - 1) { v /= 1000; i++; }
+  // binary steps: providers report GiB but label it GB - 512 GiB must read
+  // "512 GB", matching their consoles, never "550 GB"
+  while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
   return `${v >= 100 ? v.toFixed(0) : v >= 10 ? v.toFixed(1) : v.toFixed(2)} ${units[i]}`;
 }
 

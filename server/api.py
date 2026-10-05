@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
+import threading
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import StreamingResponse
@@ -66,8 +68,11 @@ class LoginBody(BaseModel):
 
 # ponytail: in-memory per-username+IP backoff; a shared store if this ever
 # runs multi-worker
-_login_fails: dict[str, tuple[int, float]] = {}  # key -> (fails, locked_until)
-_MAX_FAILS, _LOCK_SECONDS = 5, 15 * 60
+# key -> (fails, last_fail_at, locked_until); last_fail_at gives every entry
+# an expiry so unauthenticated scans can't grow the dict without bound
+_login_fails: dict[str, tuple[int, float, float]] = {}
+_MAX_FAILS, _LOCK_SECONDS, _FAIL_TTL = 5, 15 * 60, 15 * 60
+_login_lock = threading.Lock()  # sync def route -> threadpool: guard the RMW
 
 
 def _login_key(body: LoginBody, request: Request) -> str:
@@ -86,26 +91,39 @@ def _evict_expired() -> None:
     pop - evict expired entries so the dict can't grow unbounded."""
     import time as _time
     now = _time.time()
-    for k in [k for k, (_, locked_until) in _login_fails.items()
-              if locked_until and locked_until < now]:
+    for k in [k for k, (_, last_fail_at, locked_until) in _login_fails.items()
+              if (locked_until and locked_until < now)
+              or (not locked_until and last_fail_at and last_fail_at < now - _FAIL_TTL)]:
         _login_fails.pop(k, None)
 
 
 @router.post("/auth/login")
 def login(body: LoginBody, response: Response, request: Request):
     import time as _time
-    _evict_expired()
-    key = _login_key(body, request)
-    fails, locked_until = _login_fails.get(key, (0, 0.0))
-    if _time.time() < locked_until:
-        remaining = int((locked_until - _time.time()) / 60) + 1
-        raise HTTPException(429, f"too many failed attempts - try again in {remaining} min")
+    now = _time.time()
+    with _login_lock:
+        _evict_expired()
+        # two keys per attempt: username|ip AND username alone - X-Forwarded-For
+        # is spoofable per-request, so IP rotation must not sidestep the lockout
+        keys = (_login_key(body, request), body.username)
+        for key in keys:
+            fails, _, locked_until = _login_fails.get(key, (0, 0.0, 0.0))
+            if now < locked_until:
+                remaining = int((locked_until - now) / 60) + 1
+                raise HTTPException(429, f"too many failed attempts - try again "
+                                         f"in {remaining} min")
     result = auth.login(body.username, body.password)
     if not result:
-        _login_fails[key] = (fails + 1,
-                             _time.time() + _LOCK_SECONDS if fails + 1 >= _MAX_FAILS else 0.0)
+        with _login_lock:
+            for key in keys:
+                fails, _, _ = _login_fails.get(key, (0, 0.0, 0.0))
+                _login_fails[key] = (fails + 1, now,
+                                     now + _LOCK_SECONDS
+                                     if fails + 1 >= _MAX_FAILS else 0.0)
         raise HTTPException(401, "wrong username or password")
-    _login_fails.pop(key, None)
+    with _login_lock:
+        for key in keys:
+            _login_fails.pop(key, None)
     token, user = result
     _set_cookie(response, token)
     return {"ok": True, "role": user.role, "username": user.username}
@@ -361,6 +379,13 @@ def delete_account(account_id: int, user=Depends(auth.require_admin)):
 @router.post("/accounts/{account_id}/sync")
 def force_sync(account_id: int, user=Depends(auth.require_user)):
     # admin-only? No: a viewer refreshing data is harmless and useful.
+    account = accounts.get_account(account_id)
+    if not account:
+        raise HTTPException(404, "no such account")
+    # request_sync only signals an EXISTING event - detect the no-op so the
+    # route never reports ok for a sync that will not happen
+    if not account["enabled"] or account_id not in sync._sync_events:
+        raise HTTPException(409, "account is disabled or not syncing")
     sync.request_sync(account_id)
     return {"ok": True}
 
@@ -493,7 +518,7 @@ async def apply_firewall(account_id: int, provider_id: str, body: FirewallBody,
     adapter_cls = accounts.ADAPTERS.get(account["adapter"])
     if not adapter_cls or Capability.FIREWALL not in adapter_cls.capabilities:
         raise HTTPException(409, f"{account['adapter']} does not support firewall management")
-    from .adapters.base import UnsupportedAction
+    from .adapters.base import AdapterError, UnsupportedAction
     try:
         adapter = accounts.build_adapter(account)
         try:
@@ -510,6 +535,10 @@ async def apply_firewall(account_id: int, provider_id: str, body: FirewallBody,
         return {"ok": True}
     except UnsupportedAction as e:
         raise HTTPException(409, str(e))
+    except AdapterError as e:
+        # adapter-authored refusals/failures (e.g. hetzner's empty-allow-rules
+        # guard) surface as-is - same mapping as run_action
+        raise HTTPException(502, str(e))
 
 
 @router.get("/actions")
@@ -647,7 +676,9 @@ def overview(user: auth.User = Depends(auth.require_user)):
     """Dashboard aggregate: status counts, per-currency spend, traffic totals,
     recent actions, alerts. Never sums mixed currencies."""
     with db.connect() as conn:
-        rows = conn.execute("SELECT canonical FROM servers").fetchall()
+        rows = conn.execute(
+            "SELECT account_id, provider_id, canonical, first_seen_at "
+            "FROM servers").fetchall()
         hist = conn.execute(
             "SELECT day, SUM(bytes_used) AS total FROM traffic_history "
             "GROUP BY day ORDER BY day DESC LIMIT 30").fetchall()
@@ -664,10 +695,14 @@ def overview(user: auth.User = Depends(auth.require_user)):
     # spend grouped per (adapter, currency) - mixed currencies never summed
     spend: dict[str, dict[str, float]] = {}
     alerts: list[dict] = []
-    # first_seen per server - a server only costs money from the day it appeared
-    server_since: dict[str, str] = {}
+    # (account_id, provider_id) -> (canonical, first_seen) - parse each server
+    # once (never in the per-day loop), key by the server row's identity
+    # (names collide across accounts). first_seen comes from the DB column -
+    # canonical JSON never carries it.
+    servers: dict[tuple, tuple] = {}
     for row in rows:
         s = json.loads(row["canonical"])
+        servers[(row["account_id"], row["provider_id"])] = (s, row["first_seen_at"])
         status_counts[s.get("status", "unknown")] = status_counts.get(s.get("status", "unknown"), 0) + 1
         mp = s.get("monthly_price")
         if mp:
@@ -679,7 +714,6 @@ def overview(user: auth.User = Depends(auth.require_user)):
             alerts.append({"kind": "down", "server": s.get("name", "?"),
                            "adapter": s["adapter"],
                            "status": s.get("status")})
-        server_since[s.get("name", "?")] = s.get("first_seen_at") or "0000"
         al = s.get("allowance") or {}
         inc, used = al.get("included_bytes"), al.get("used_bytes")
         if inc and used is not None and used / inc > 0.8:
@@ -696,12 +730,12 @@ def overview(user: auth.User = Depends(auth.require_user)):
     # traffic_days, bucketed by first_seen so a new server doesn't backfill
     # the whole month with its price)
     spend_days = [{"day": d["day"],
-                   "spend": _spend_for_day(rows, server_since, d["day"])}
+                   "spend": _spend_for_day(servers, d["day"])}
                   for d in traffic_days]
     return {
         "fleet": {"total": len(rows), "by_status": status_counts},
         "spend": spend,  # {adapter: {currency: amount}}
-        "projected_overage": _overage_per_currency(rows),
+        "projected_overage": _overage_per_currency(servers.values()),
         "traffic_days": traffic_days,
         "spend_days": spend_days,
         "recent_actions": [dict(a) for a in actions],
@@ -710,15 +744,12 @@ def overview(user: auth.User = Depends(auth.require_user)):
     }
 
 
-def _spend_for_day(rows, server_since: dict[str, str], day: str) -> dict[str, float]:
+def _spend_for_day(servers: dict[tuple, tuple], day: str) -> dict[str, float]:
     """Monthly spend per currency over servers that existed on `day`.
     Per-currency only - never summed across currencies."""
     out: dict[str, float] = {}
-    for row in rows:
-        s = json.loads(row["canonical"])
-        name = s.get("name", "?")
-        since = server_since.get(name, "0000")
-        if since and since[:10] > day:
+    for s, first_seen in servers.values():
+        if first_seen and first_seen[:10] > day:
             continue  # server not provisioned yet on this day
         mp = s.get("monthly_price")
         if mp:
@@ -729,8 +760,7 @@ def _spend_for_day(rows, server_since: dict[str, str], day: str) -> dict[str, fl
 
 def _overage_per_currency(rows) -> dict[str, float]:
     out: dict[str, float] = {}
-    for row in rows:
-        s = json.loads(row["canonical"])
+    for s, _ in rows:
         po = (s.get("allowance") or {}).get("projected_overage_cost")
         if po:
             cur = po.get("currency", "EUR")
@@ -762,6 +792,8 @@ def create_user(body: UserBody, user: auth.User = Depends(auth.require_admin)):
         uid = auth.create_user(body.username, body.password, body.role)
     except ValueError as e:
         raise HTTPException(400, str(e))
+    except sqlite3.IntegrityError:
+        raise HTTPException(409, f"user '{body.username}' already exists")
     audit.record(user.id, "user.create", f"user/{body.username}")
     return {"id": uid}
 
@@ -809,9 +841,11 @@ def get_settings(user: auth.User = Depends(auth.require_admin)):
 
 @router.put("/settings")
 def put_settings(body: dict, user: auth.User = Depends(auth.require_admin)):
-    for k, v in body.items():
+    # validate ALL keys first - a rejected one must not leave a partial write
+    for k in body:
         if not (k.startswith("sync_") or k.startswith("update_")):
             raise HTTPException(400, "only sync_* and update_* settings are editable")
+    for k, v in body.items():
         db.set_setting(k, str(v))
     audit.record(user.id, "settings.update", "settings")
     return {"ok": True}

@@ -206,7 +206,13 @@ async def _loop() -> None:
             with contextlib.suppress(Exception):
                 await update.check()
             last_sweep_day = today
-        hours = float(db.get_setting("catalog_sync_interval_hours") or 24)
+        # a bad value (non-numeric) must degrade to the default, not raise
+        # inside the loop and permanently kill the catalog task (accounts.
+        # interval_for guards the same pattern)
+        try:
+            hours = float(db.get_setting("catalog_sync_interval_hours") or 24)
+        except ValueError:
+            hours = 24.0
         # ponytail: single loop for all providers; per-provider tasks if one
         # slow provider ever blocks the rest
         await asyncio.sleep(max(1.0, hours) * 3600)  # floor 1h: no typo-driven hammering

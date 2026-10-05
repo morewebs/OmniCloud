@@ -20,9 +20,12 @@ Fleet adapter - all facts verified against the official OpenAPI 3.1 spec
   "start"|"stop"|"reboot"|"reboot_hard"|"resume"|"suspend"} -> 200/202
   {"tasks": ["<uuid>"]}; poll GET /cloud/v1/tasks/{id} until FINISHED
   (NEW/RUNNING/ERROR; ERROR carries an error string). A task id is never
-  success.
+  success. Power actions poll the task to FINISHED, THEN the instance's own
+  status to the action's target (a REBOOT may read ACTIVE while stale).
 - Rename/relabel: PATCH /cloud/v1/instances/{p}/{r}/{id} accepts name and
-  tags (RFC 7386 JSON Merge Patch semantics), returns 200 + the serializer.
+  tags (RFC 7386 JSON Merge Patch: key:value sets, null removes the key,
+  unspecified keys and read-only tags are preserved), returns 200 + the
+  serializer.
 - Delete: DELETE .../instances/{p}/{r}/{id} -> 200 {"tasks":[...]} (NOT 204),
   then the task; confirmed gone when the instance GET 404s.
 - Price: GET /cloud/v1/pricing/{p}/{r}/instances/{id} -> price_per_hour,
@@ -49,7 +52,6 @@ from __future__ import annotations
 
 import asyncio
 import time
-from datetime import datetime
 from decimal import Decimal
 from typing import Any
 
@@ -58,7 +60,7 @@ import httpx
 from . import http as phttp
 from .base import (
     ActionTimeout, ActionResult, AdapterError, Allowance, Capability, Facet,
-    IpOffer, Money, Plan, ProviderAdapter, Server, ServerStatus,
+    IpOffer, Money, Plan, ProviderAdapter, Server, ServerStatus, parse_dt,
 )
 
 API = "https://api.gcore.com"
@@ -145,17 +147,17 @@ class GcoreAdapter(ProviderAdapter):
     # -- reads -----------------------------------------------------------
 
     async def list_servers(self) -> list[Server]:
-        servers: list[Server] = []
         projects = await self.h.get_json("/cloud/v1/projects")
         regions = await self._regions()
-        for project in projects.get("results", []):
-            pid = project.get("id")
-            if pid is None:
-                continue
-            for region in regions:
-                servers.extend(
-                    await self._list_region_instances(pid, region))
-        return servers
+        # regions x projects are independent listings - run them concurrently
+        # (most pairs are empty; sequential would be dozens of round trips).
+        # gather keeps the refuse-partial rule: the first failure still fails
+        # the whole sync, never a silently partial fleet.
+        jobs = [self._list_region_instances(project.get("id"), region)
+                for project in projects.get("results", [])
+                if project.get("id") is not None
+                for region in regions]
+        return [s for batch in await asyncio.gather(*jobs) for s in batch]
 
     async def get_server(self, provider_id: str) -> Server:
         pid, region, iid = self._split_id(provider_id)
@@ -193,7 +195,10 @@ class GcoreAdapter(ProviderAdapter):
             offset += 100
             if len(rows) >= count or not data.get("results"):
                 break
-        return [await self._server(row, pid, region) for row in rows]
+        # per-instance pricing GETs are independent - concurrent, not N
+        # sequential round trips (each is its own HTTP call)
+        return list(await asyncio.gather(
+            *[self._server(row, pid, region) for row in rows]))
 
     async def _server(self, row: dict, pid: Any, region: str) -> Server:
         iid = str(row.get("id"))
@@ -210,6 +215,12 @@ class GcoreAdapter(ProviderAdapter):
         if flavor.get("ram"):
             # spec: ram is in MiB - render the provider's unit, never guess GB
             facets.append(Facet(label="ram", value=f"{flavor['ram']} MiB"))
+        # read-only tags are the provider's own metadata: merge patch always
+        # preserves them, so they are facets (visible, uneditable), never labels
+        for t in row.get("tags") or []:
+            if t.get("key") and t.get("read_only"):
+                facets.append(Facet(label=f"tag: {t['key']} (read-only)",
+                                    value=str(t.get("value", ""))))
 
         return Server(
             provider_id=f"{pid}:{region}:{iid}",
@@ -219,9 +230,11 @@ class GcoreAdapter(ProviderAdapter):
             status=STATE_MAP.get(str(row.get("status", "")).upper(),
                                  ServerStatus.UNKNOWN),
             ipv4=self._ipv4(row),
-            region=str(region),
+            # the serializer carries the provider's own region display name
+            # (row.region, e.g. "Frankfurt"); the path id stays in provider_id
+            region=row.get("region") or str(region),
             server_type=fname,
-            created=_dt(row.get("created_at")),
+            created=parse_dt(row.get("created_at")),
             labels=self._labels(row.get("tags")),
             monthly_price=price,
             allowance=Allowance(
@@ -236,24 +249,27 @@ class GcoreAdapter(ProviderAdapter):
 
     @staticmethod
     def _ipv4(row: dict) -> str | None:
-        """Public IPv4: the type:"floating" address in the addresses map; a
-        fixed addr on the external network is a sane fallback."""
-        best: str | None = None
+        """Public IPv4: the type:"floating" address in the addresses map. A
+        fixed addr on an external network is public too, but the addresses
+        map cannot tell external from internal networks - and returning a
+        private fixed addr (10.x/172.16.x/192.168.x) as the server's public
+        IP would be a lie. So: floating wins; otherwise no honest value."""
         for entries in (row.get("addresses") or {}).values():
             for a in entries or []:
                 addr = a.get("addr")
-                if addr and "." in addr:
-                    if a.get("type") == "floating":
-                        return addr
-                    best = best or addr
-        return best
+                if addr and "." in addr and a.get("type") == "floating":
+                    return addr
+        return None
 
     @staticmethod
     def _labels(tags: list | None) -> dict[str, str] | None:
+        """User-editable tags only: read-only tags are the provider's own
+        metadata (merge patch can never change them) - rendered as facets in
+        _server, never as labels the UI would offer for editing."""
         if not tags:
             return None
         return {t.get("key", ""): t.get("value", "")
-                for t in tags if t.get("key")}
+                for t in tags if t.get("key") and not t.get("read_only")}
 
     async def _price_for(self, pid: Any, region: str, iid: str) -> Money | None:
         """Per-instance monthly price (discounted price_per_month). Failure or
@@ -280,9 +296,13 @@ class GcoreAdapter(ProviderAdapter):
         base = f"/cloud/v1/instances/{pid}/{region}/{iid}"
         if cap in POWER_ACTION:
             # Verified: v2 action endpoint; verbs start/stop/reboot.
-            await self.h.post_json(
+            r = await self.h.post_json(
                 f"/cloud/v2/instances/{pid}/{region}/{iid}/action",
                 {"action": POWER_ACTION[cap]})
+            # poll the returned tasks to FINISHED first: for REBOOT the
+            # instance may still read ACTIVE (stale) before the task even
+            # starts, so a bare status poll could confirm a no-op
+            await self._poll_tasks(r.json().get("tasks", []))
             return await self._poll(cap, server_id)
         if cap == Capability.RENAME:
             r = await self.h.request("PATCH", base, json={"name": params["name"]})
@@ -294,12 +314,22 @@ class GcoreAdapter(ProviderAdapter):
                 raise AdapterError("rename not confirmed by the provider")
             return ActionResult(detail="renamed")
         if cap == Capability.RELABEL:
-            r = await self.h.request("PATCH", base,
-                                     json={"tags": params["labels"]})
+            # RFC 7386 merge patch (spec: UpdateTagsSerializer): unspecified
+            # keys stay, null removes a key. The UI sends the full desired
+            # label set, so send removals (null) for keys the patch must drop;
+            # read-only tags are always preserved by the provider.
+            row = await self.h.get_json(base)
+            current = self._labels(row.get("tags")) or {}
+            wanted = params["labels"]
+            patch = dict(wanted)
+            for k in current:
+                if k not in patch:
+                    patch[k] = None  # merge-patch removal
+            r = await self.h.request("PATCH", base, json={"tags": patch})
             if r.status_code != 200:
                 raise AdapterError(f"gcore relabel failed: {r.status_code}")
             row = await self.h.get_json(base)
-            if self._labels(row.get("tags")) != params["labels"]:
+            if self._labels(row.get("tags")) != wanted:
                 raise AdapterError("relabel not confirmed by the provider")
             return ActionResult(detail="relabeled")
         if cap == Capability.DELETE:
@@ -308,13 +338,15 @@ class GcoreAdapter(ProviderAdapter):
             if r.status_code != 200:
                 raise AdapterError(f"gcore delete failed: {r.status_code}")
             await self._poll_tasks(r.json().get("tasks", []))
-            # confirmed gone only when the provider 404s the instance
-            try:
-                await self.h.get_json(base)
-            except AdapterError as e:
-                if "404" in str(e):
-                    return ActionResult(detail="deleted")
-                raise
+            # confirmed gone only when the provider 404s the instance - the
+            # status code itself, never "404" substring-matched in a message
+            # (a uuid can contain 404; a 500 would then read as deleted)
+            r = await self.h.request("GET", base)
+            if r.status_code == 404:
+                return ActionResult(detail="deleted")
+            if r.status_code >= 400:
+                raise AdapterError(
+                    f"gcore delete verify GET failed: {r.status_code}")
             raise AdapterError("delete task finished but instance still lists")
         raise AdapterError(f"gcore does not support {cap.value}")
 
@@ -366,15 +398,6 @@ class GcoreAdapter(ProviderAdapter):
         await self.h.aclose()
 
 
-def _dt(s: str | None) -> datetime | None:
-    if not s:
-        return None
-    try:
-        return datetime.fromisoformat(s.replace("Z", "+00:00"))
-    except ValueError:
-        return None
-
-
 class GcoreCatalogAdapter(ProviderAdapter):
     key = "gcore"
     display_name = "Gcore"
@@ -413,11 +436,13 @@ class GcoreCatalogAdapter(ProviderAdapter):
                     ram_gb=f.get("ram"),
                     disk_gb=f.get("disk"),
                     disk_type="nvme" if "nvme" in str(f.get("volume_types", "")).lower() else None,
+                    # `is not None`, never truthiness: a real 0 USD/min
+                    # flavor is a published price, not "not published".
                     price_monthly=(
                         Money(amount=per_min * Decimal(43200), currency="USD")
-                        if per_min else None),
+                        if per_min is not None else None),
                     price_hourly=(Money(amount=per_min * Decimal(60), currency="USD")
-                                  if per_min else None),
+                                  if per_min is not None else None),
                     included_traffic_bytes=None,  # unmetered - no number to publish
                     counting=None,
                     extra_ip=IpOffer(
@@ -448,8 +473,10 @@ class GcoreCatalogAdapter(ProviderAdapter):
             name = item.get("name") or item.get("itemName") or ""
             if item.get("vmType") not in (None, "standard", "shared"):
                 continue
-            price_min = item.get("priceMinute") or item.get("price")
-            if name and price_min:
+            price_min = item.get("priceMinute")
+            if price_min is None:
+                price_min = item.get("price")
+            if name and price_min is not None:  # a real 0 IS a published price
                 try:
                     out[name] = Decimal(str(price_min))
                 except Exception:  # noqa: BLE001

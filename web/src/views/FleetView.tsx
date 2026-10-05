@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import Alert from '@mui/material/Alert';
@@ -107,13 +107,11 @@ export function FleetView() {
 
   const pagedRows = useMemo(
     () => rows.slice(safePage * rowsPerPage, (safePage + 1) * rowsPerPage),
-    [rows, page, rowsPerPage]);
+    [rows, safePage, rowsPerPage]);
 
-  const allServers = fleet.data?.accounts.flatMap(a => a.servers) ?? [];
-  // server NAME for a provider id (actions carry the provider's id; the
-  // operator thinks in names)
-  const serverName = (pid: string) =>
-    allServers.find(s => s.provider_id === pid)?.name ?? pid;
+  const allServers = useMemo(
+    () => fleet.data?.accounts.flatMap(a => a.servers) ?? [],
+    [fleet.data]);
   const summary = useMemo(() => {
     const running = allServers.filter(s => s.status === 'running').length;
     const notReporting = allServers.filter(s => s.status === 'unknown').length;
@@ -123,6 +121,10 @@ export function FleetView() {
       .map(([cur, amt]) => fmtCurrency(amt, cur)).join(' + ');
     return { total: allServers.length, running, notReporting, traffic, overage };
   }, [allServers]);
+  // server NAME for a provider id (actions carry the provider's id; the
+  // operator thinks in names)
+  const serverName = (pid: string) =>
+    allServers.find(s => s.provider_id === pid)?.name ?? pid;
 
   if (fleet.isPending) {
     // Skeletons matching the table rhythm; no spinners anywhere.
@@ -304,14 +306,22 @@ export function FleetView() {
 }
 
 /** Image picker for the rebuild flow - a wipe-the-disk action must never
- * run on a hidden placeholder image the operator never chose. */
-function RebuildImagePicker({ adapter, value, onChange }: {
+ * run on a hidden placeholder image the operator never chose. status
+ * bubbles up so the confirm gate can block an unset image (which would
+ * hit a server-side KeyError and surface as an obscure 502). */
+function RebuildImagePicker({ adapter, value, onChange, onStatus }: {
   adapter: string; value: string; onChange: (v: string) => void;
+  onStatus: (s: 'loading' | 'error' | 'none' | 'ready') => void;
 }) {
   const images = useQuery<{ id: string; name: string; os: string; version: string | null }[]>({
     queryKey: ['catalog-images', adapter],
     queryFn: () => api(`/api/catalog/images?adapter=${adapter}`),
   });
+  const status = images.isPending ? 'loading'
+    : images.isError ? 'error'
+    : (images.data?.length ?? 0) === 0 ? 'none'
+    : 'ready';
+  useEffect(() => { onStatus(status); }, [status, onStatus]);
   if (images.isPending) {
     return <TextField select disabled size="small" margin="dense" fullWidth
                       label="Image" value="" sx={{ mt: 1 }}>
@@ -324,10 +334,18 @@ function RebuildImagePicker({ adapter, value, onChange }: {
       <Button size="small" onClick={() => images.refetch()}>Retry</Button>
     </Alert>;
   }
-  if (!images.data?.length) return null; // adapter exposes no image list - omit, not block
+  if (!images.data?.length) {
+    // adapter exposes no image list - the panel cannot send an image the
+    // operator never chose, so rebuild is blocked with an explanation
+    return <Alert severity="warning" icon={false} sx={{ mt: 1 }}>
+      This provider exposes no image list — rebuild is disabled here; use
+      the provider console to pick the fresh system explicitly.
+    </Alert>;
+  }
   return (
     <TextField select size="small" margin="dense" fullWidth label="Image (fresh system)"
-               value={value} onChange={e => onChange(e.target.value)} sx={{ mt: 1 }}>
+               value={value} onChange={e => onChange(e.target.value)} sx={{ mt: 1 }}
+               helperText={value ? undefined : 'pick the image to rebuild from'}>
       {images.data.map(i => (
         <MenuItem key={i.id} value={i.id}>
           {i.name}{i.version ? ` ${i.version}` : ''} ({i.os})
@@ -344,47 +362,41 @@ function ServerDialog({ server, isAdmin, capabilities, onClose, onDone }: {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [rebuildImage, setRebuildImage] = useState('');
+  const [rebuildImgStatus, setRebuildImgStatus] = useState<'loading' | 'error' | 'none' | 'ready'>('loading');
   const [rename, setRename] = useState(server.name);
+  // server is a LIVE re-derived row: an untouched field follows server.name,
+  // and once a rename lands (field === live name) the field is pristine again
+  // - a stale draft must never rename the server BACK
+  const [renamePristine, setRenamePristine] = useState(true);
+  useEffect(() => {
+    if (rename === server.name) setRenamePristine(true);
+    else if (renamePristine) setRename(server.name);
+  }, [server.name, rename, renamePristine]);
   const [labelsOpen, setLabelsOpen] = useState(false);
   const [rawOpen, setRawOpen] = useState(false);
   const [fwOpen, setFwOpen] = useState(false);        // manage attached
   const [fwAttachOpen, setFwAttachOpen] = useState(false);  // pick existing
   const [fwCreateOpen, setFwCreateOpen] = useState(false); // create new
-  const [attachedFws, setAttachedFws] = useState<
-    { id: number; name: string; rule_detail?: FirewallRuleDetail[] }[]>([]);
   const has = (c: string) => capabilities.includes(c); // absent = not rendered
 
   const allFws = useQuery<{ id: number; name: string; rules: number;
-    applied_to_count: number; applied_server_ids: number[] }[]>({
+    applied_to_count: number; applied_server_ids: number[];
+    rule_detail?: FirewallRuleDetail[] }[]>({
     queryKey: ['firewalls', server.account_id],
     queryFn: () => api(`/api/accounts/${server.account_id}/firewalls`),
     enabled: has('firewall'),
   });
 
-  // Attached firewalls: exact ids from the account's firewalls endpoint
+  // Attached firewalls: derived from the same query as the attach picker
   // (each row knows which servers it's applied to - shared resources).
-  // Loading/error are tracked: a failed load must NEVER render the
+  // Loading/error ride on the query: a failed load must NEVER render the
   // "no firewalls - accepts all traffic" claim (that would be a false
   // security statement).
-  const [fwLoading, setFwLoading] = useState(false);
-  const [fwError, setFwError] = useState<string | null>(null);
-  const loadAttached = async () => {
-    setFwLoading(true); setFwError(null);
-    try {
-      const rows = await api<{ id: number; name: string; applied_server_ids: number[];
-        rule_detail?: FirewallRuleDetail[] }[]>(
-        `/api/accounts/${server.account_id}/firewalls`);
-      // provider ids may be numeric or string - compare as strings
-      const attached = rows.filter(r => r.applied_server_ids.map(String).includes(server.provider_id))
-        .map(r => ({ id: r.id, name: r.name, rule_detail: r.rule_detail }));
-      setAttachedFws(attached);
-    } catch (e) {
-      setFwError((e as Error).message);
-    } finally {
-      setFwLoading(false);
-    }
-  };
-  const openFw = async () => { setFwOpen(true); await loadAttached(); };
+  // provider ids may be numeric or string - compare as strings
+  const attachedFws = useMemo(() => (allFws.data ?? [])
+    .filter(r => r.applied_server_ids.map(String).includes(server.provider_id))
+    .map(r => ({ id: r.id, name: r.name, rule_detail: r.rule_detail })),
+    [allFws.data, server.provider_id]);
 
   const history = useQuery({
     queryKey: ['server', server.account_id, server.provider_id],
@@ -492,7 +504,7 @@ function ServerDialog({ server, isAdmin, capabilities, onClose, onDone }: {
                 <Stack direction="row" spacing={1} sx={{ flexWrap: "wrap" }}>
                   {has('rename') && (
                     <TextField size="small" label="Rename" value={rename}
-                               onChange={e => setRename(e.target.value)}
+                               onChange={e => { setRename(e.target.value); setRenamePristine(false); }}
                                sx={{ width: 200 }} />
                   )}
                   {has('rename') && (
@@ -517,7 +529,7 @@ function ServerDialog({ server, isAdmin, capabilities, onClose, onDone }: {
                   )}
                   {has('firewall') && (
                     <Button size="small" variant="outlined" disabled={busy}
-                            onClick={openFw}>Firewall…</Button>
+                            onClick={() => setFwOpen(true)}>Firewall…</Button>
                   )}
                   {has('firewall') && (
                     <Button size="small" variant="outlined" disabled={busy || allFws.isFetching}
@@ -594,10 +606,14 @@ function ServerDialog({ server, isAdmin, capabilities, onClose, onDone }: {
         requireTyped
         confirming={busy}
         error={error}
-        onConfirm={() => act('rebuild', { image: rebuildImage || undefined })}
+        // undefined image = server-side KeyError -> obscure 502; block instead
+        onConfirm={() => { if (rebuildImage) act('rebuild', { image: rebuildImage }); }}
+        confirmDisabled={rebuildImgStatus !== 'ready' || !rebuildImage}
         onClose={() => setConfirm(null)}
       >
-        <RebuildImagePicker adapter={server.adapter} value={rebuildImage} onChange={setRebuildImage} />
+        <RebuildImagePicker adapter={server.adapter} value={rebuildImage}
+                            onChange={setRebuildImage}
+                            onStatus={setRebuildImgStatus} />
       </ConfirmDialog>
       <ConfirmDialog
         open={confirm === 'delete'}
@@ -615,13 +631,13 @@ function ServerDialog({ server, isAdmin, capabilities, onClose, onDone }: {
         open={fwOpen}
         serverName={server.name}
         attachedFirewalls={attachedFws}
-        loading={fwLoading}
-        error={fwError ?? (busy ? null : error)}
+        loading={allFws.isFetching}
+        error={allFws.error ? (allFws.error as Error).message : (busy ? null : error)}
         onDetach={async (fwId) => {
           setBusy(true); setError(null);
           try {
             await post(`/api/accounts/${server.account_id}/firewalls/${fwId}/detach/${server.provider_id}`);
-            await loadAttached();
+            await allFws.refetch();
           } catch (e) {
             setError((e as Error).message);
           } finally {
@@ -629,7 +645,7 @@ function ServerDialog({ server, isAdmin, capabilities, onClose, onDone }: {
           }
         }}
         onShowCreate={() => { setFwOpen(false); setFwCreateOpen(true); }}
-        onClose={() => { setFwOpen(false); setFwError(null); }}
+        onClose={() => setFwOpen(false)}
       />
       <AttachFirewallDialog
         open={fwAttachOpen}
@@ -643,7 +659,7 @@ function ServerDialog({ server, isAdmin, capabilities, onClose, onDone }: {
           try {
             await post(`/api/accounts/${server.account_id}/firewalls/${fwId}/attach/${server.provider_id}`);
             setFwAttachOpen(false);
-            await loadAttached();
+            await allFws.refetch();
             setFwOpen(true);
           } catch (e) {
             setError((e as Error).message);

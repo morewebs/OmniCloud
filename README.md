@@ -10,7 +10,8 @@ ordered by what needs attention first — is anything down, what will this
 month cost — with technical depth one click down and a JSON API for
 scripts and tools.
 
-**Server management:** Hetzner Cloud, LeaseWeb, OVHcloud (VPS + Public Cloud).
+**Server management:** Hetzner Cloud, LeaseWeb, OVHcloud (VPS + Public Cloud),
+Gcore (basic VMs).
 **Plan marketplace (7 providers):** Hetzner, LeaseWeb, OVHcloud, Gcore,
 Tube-hosting (live pricing from public APIs) + Netlen, LightNode (curated
 public list prices, stamped with source and last-verified date).

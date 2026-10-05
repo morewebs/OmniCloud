@@ -249,6 +249,68 @@ auth guides; ovhcloud.com public-cloud pricing page)
 - **Rate limits**: NOT documented anywhere in the developer portal. Treat as
   unknown; keep the backoff ladder.
 
+## Gcore Cloud fleet (verified 2026-10-05 against the official OpenAPI 3.1
+spec `cloud_api.yaml` — G-Core's product-documentation repo — and
+docs.gcore.com developer-tools REST API docs)
+
+### Auth (permanent API token)
+
+- Header `Authorization: APIKey <token>` — **NOT Bearer** (Bearer returns
+  "Given token not valid for any token type"). Created at gcore.com →
+  Profile → API tokens; role administrator/engineer/user, one token covers
+  all products. The legacy JWT flow (`/identity/openid/token`) exists but is
+  not the documented path.
+
+### Scoping and ids
+
+- Every regional resource path embeds project AND region:
+  `/cloud/v1/instances/{project_id}/{region_id}/...`. provider_id is
+  compound and self-routing: `{project}:{region}:{uuid}`.
+- `GET /cloud/v1/projects` → `{count, results:[{id, name, is_default, state}]}`.
+- Region ids from `GET /cloud/v1/regions` (authenticated; the tokenless
+  public variant is the catalog adapter's fallback).
+
+### Instances (InstanceSerializer — exact field names)
+
+- List `GET /cloud/v1/instances/{p}/{r}`, envelope `{count, results}`,
+  pagination `limit`/`offset` (default/max 1000).
+- `name` is a **flat** field. `flavor` is **nested**:
+  `flavor_id/flavor_name/vcpus/ram` (ram in **MiB**) — no top-level flavor_id.
+- `addresses`: map network-name → `[{addr, type}]`; the public IP is the
+  `type: "floating"` entry (`InstanceFloatingAddressSerializer`).
+- `created_at` (not `created`); `status` (uppercase OpenStack-style enum)
+  AND `vm_state` (lowercase) both present — panel maps `status`.
+- `tags`: `[{key, value, read_only}]` → labels.
+- Status enum: ACTIVE, BUILD, DELETED, ERROR, HARD_REBOOT, MIGRATING,
+  PASSWORD, PAUSED, REBOOT, REBUILD, RESCUE, RESIZE, REVERT_RESIZE, SHELVED,
+  SHELVED_OFFLOADED, SHUTOFF, SOFT_DELETED, SUSPENDED, UNKNOWN, VERIFY_RESIZE.
+  REBOOT/HARD_REBOOT are **not** confirmed-running — in-flight until the
+  task finishes.
+
+### Actions (all async via tasks)
+
+- `POST /cloud/v2/instances/{p}/{r}/{id}/action` `{"action":
+  "start"|"stop"|"reboot"|"reboot_hard"|"resume"|"suspend"}` → `{"tasks":
+  ["<uuid>"]}`. Poll `GET /cloud/v1/tasks/{id}` (NEW/RUNNING/**FINISHED**/
+  **ERROR**; ERROR carries an error string). A task id is never success;
+  power actions are confirmed on the instance's own `status`
+  (ACTIVE/SHUTOFF).
+- Rename/relabel: `PATCH /cloud/v1/instances/{p}/{r}/{id}` accepts `name`
+  and `tags` (RFC 7386 JSON Merge Patch), 200 + serializer — confirmed by
+  the returned name/tags.
+- Delete: `DELETE ...` returns **200** with `{"tasks":[...]}` (NOT 204);
+  confirmed gone only when the instance GET 404s.
+- **No VM rebuild endpoint in the spec** (bare metal only) — REBUILD is not
+  offered. Traffic is free and unmetered (ingress AND egress) per docs —
+  allowance is a window note, no byte fields.
+
+### Pricing
+
+- `GET /cloud/v1/pricing/{p}/{r}/instances/{id}` → `price_per_hour,
+  price_per_month` (discounted), `price_without_discount_per_month,
+  discount_percent, currency_code`. Panel uses the discounted
+  `price_per_month`; missing/404 → None ("-", never zero).
+
 ## Unverifiable (docs do not settle these - do not encode as fact)
 
 - Exact counter-reset instant (calendar month vs billing anniversary) for

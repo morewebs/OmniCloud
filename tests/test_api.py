@@ -162,17 +162,18 @@ def test_adapters_lists_fleet_and_catalog_providers(client):
     # fleet adapters (incl. the registered real ones) carry capabilities and
     # no catalog source
     fleet = {a["key"] for a in rows if not a.get("source")}
-    assert fleet == {"fake", "hetzner", "leaseweb", "ovh"}
+    assert fleet == {"fake", "hetzner", "leaseweb", "ovh", "gcore"}
     assert row_by_key["ovh"]["capabilities"], "ovh is a full fleet adapter"
+    assert row_by_key["gcore"]["capabilities"], "gcore is a full fleet adapter"
     # catalog-only providers carry their honest source label
-    for key in ("gcore", "tube"):
+    for key in ("tube",):
         assert row_by_key[key]["source"] == "live"
     for key in ("netlen", "lightnode"):
         assert row_by_key[key]["source"] == "seeded"
-    # no credential can be created for a catalog-only provider (ovh is now
-    # a full fleet adapter - gcore remains catalog-only)
+    # no credential can be created for a catalog-only provider (gcore is now
+    # a full fleet adapter - tube remains catalog-only)
     r = client.post("/api/accounts", headers=HDRS,
-                    json={"adapter": "gcore", "name": "x", "token": TEST_TOKEN})
+                    json={"adapter": "tube", "name": "x", "token": TEST_TOKEN})
     assert r.status_code == 400
 
 

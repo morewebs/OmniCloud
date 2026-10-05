@@ -1,0 +1,8 @@
+{
+  "price_per_hour": "0.012500",
+  "price_per_month": "9.11",
+  "price_without_discount_per_month": "9.11",
+  "discount_percent": 0,
+  "tax_percent": 0,
+  "currency_code": "USD"
+}

@@ -1,0 +1,13 @@
+{
+  "count": 2,
+  "results": [
+    {"id": 7, "display_name": "Frankfurt", "technical_name": "FRN-2",
+     "state": "ACTIVE", "access_level": "core", "zone": "EU",
+     "has_kvm": true, "has_baremetal": true, "has_k8s": true,
+     "available_volume_types": ["nvme", "ssd"]},
+    {"id": 12, "display_name": "Ashburn", "technical_name": "ASH-1",
+     "state": "ACTIVE", "access_level": "edge", "zone": "NA",
+     "has_kvm": true, "has_baremetal": false, "has_k8s": false,
+     "available_volume_types": ["nvme"]}
+  ]
+}

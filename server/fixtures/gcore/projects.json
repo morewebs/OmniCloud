@@ -1,0 +1,7 @@
+{
+  "count": 2,
+  "results": [
+    {"id": 101, "name": "demo-project-a7f3", "is_default": true, "state": "ACTIVE"},
+    {"id": 102, "name": "demo-project-b2c4", "is_default": false, "state": "ACTIVE"}
+  ]
+}

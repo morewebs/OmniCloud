@@ -1,5 +1,38 @@
-"""Gcore catalog adapter - LIVE, tokenless (verified 2026-10-03).
+"""Gcore Cloud adapters: fleet (account-backed) + catalog (tokenless).
 
+Fleet adapter - all facts verified against the official OpenAPI 3.1 spec
+(cloud_api.yaml, see docs/provider-truth.md Gcore section) and docs.gcore.com:
+- Base: https://api.gcore.com (single host for every service).
+- Auth: permanent API token, header "Authorization: APIKey <token>" - NOT
+  Bearer (Bearer yields "Given token not valid for any token type"). Created
+  at gcore.com -> Profile -> API tokens; one token covers all products.
+- Resources are scoped by project AND region in the path:
+  /cloud/v1/instances/{project_id}/{region_id}/... - provider_id is compound
+  and self-routing: "{project}:{region}:{uuid}" (same pattern as OVH cloud).
+- GET /cloud/v1/projects -> {count, results:[{id, name, is_default, state}]}.
+- GET /cloud/v1/instances/{p}/{r} -> {count, results:[...]}, limit/offset
+  pagination (default/max 1000). InstanceSerializer fields: name (flat),
+  flavor (NESTED: flavor_id/flavor_name/vcpus/ram in MiB - no top-level
+  flavor_id), addresses (map network->[{addr, type}]; public IP = the
+  type:"floating" entry), created_at, status (uppercase OpenStack-style) AND
+  vm_state (lowercase), tags ([{key, value, read_only}]).
+- Actions: POST /cloud/v2/instances/{p}/{r}/{id}/action {"action":
+  "start"|"stop"|"reboot"|"reboot_hard"|"resume"|"suspend"} -> 200/202
+  {"tasks": ["<uuid>"]}; poll GET /cloud/v1/tasks/{id} until FINISHED
+  (NEW/RUNNING/ERROR; ERROR carries an error string). A task id is never
+  success.
+- Rename/relabel: PATCH /cloud/v1/instances/{p}/{r}/{id} accepts name and
+  tags (RFC 7386 JSON Merge Patch semantics), returns 200 + the serializer.
+- Delete: DELETE .../instances/{p}/{r}/{id} -> 200 {"tasks":[...]} (NOT 204),
+  then the task; confirmed gone when the instance GET 404s.
+- Price: GET /cloud/v1/pricing/{p}/{r}/instances/{id} -> price_per_hour,
+  price_per_month (discounted), price_without_discount_per_month,
+  discount_percent, tax_percent, currency_code.
+- No VM rebuild endpoint in the spec (bare metal only) -> REBUILD not
+  offered. Traffic: free and unmetered (ingress AND egress) per docs - see
+  UNMETERED_NOTE below; no byte usage exists to fetch.
+
+Catalog adapter - LIVE, tokenless (verified 2026-10-03).
 Sources (all verified by direct curl with no token):
 - GET https://api.gcore.com/cloud/public/v1/regions - 33 regions (public API).
 - GET https://api.gcore.com/cloud/public/v1/basic_vms/flavors?region_id={id}
@@ -14,11 +47,21 @@ billing = prepaid PAYG wallet charged per minute (~4 USD deduction steps).
 """
 from __future__ import annotations
 
+import asyncio
+import time
+from datetime import datetime
 from decimal import Decimal
+from typing import Any
 
 import httpx
 
-from .base import IpOffer, Money, Plan, ProviderAdapter
+from . import http as phttp
+from .base import (
+    ActionTimeout, ActionResult, AdapterError, Allowance, Capability, Facet,
+    IpOffer, Money, Plan, ProviderAdapter, Server, ServerStatus,
+)
+
+API = "https://api.gcore.com"
 
 REGIONS_URL = "https://api.gcore.com/cloud/public/v1/regions"
 FLAVORS_URL = "https://api.gcore.com/cloud/public/v1/basic_vms/flavors"
@@ -26,7 +69,310 @@ BFF_ITEMS_URL = "https://bff.gcore.pro/cloud/vcc-items"
 
 # Verified uniformly across 12 tested regions (2026-10-03).
 PUBLIC_IP_MONTHLY_USD = Decimal("2.7504")
-UNMETERED_NOTE = "unmetered (free ingress and egress); bandwidth capped by flavor"
+UNMETERED_NOTE = ("unmetered (free ingress and egress); "
+                  "bandwidth capped by flavor")
+
+# Status enum verified in the spec (InstanceStatus). Unmapped -> UNKNOWN,
+# never a guess. REBUILD/RESIZE/VERIFY_RESIZE/REVERT_RESIZE/MIGRATING are
+# in-flight rebuild-class states; REBOOT/HARD_REBOOT are not "confirmed
+# running" until the task finishes (poll target is status, not hope).
+STATE_MAP = {
+    "ACTIVE": ServerStatus.RUNNING,
+    "SHUTOFF": ServerStatus.OFF,
+    "PAUSED": ServerStatus.OFF,
+    "SUSPENDED": ServerStatus.OFF,
+    "SHELVED": ServerStatus.OFF,
+    "SHELVED_OFFLOADED": ServerStatus.OFF,
+    "SOFT_DELETED": ServerStatus.OFF,
+    "BUILD": ServerStatus.REBUILDING,
+    "REBUILD": ServerStatus.REBUILDING,
+    "RESIZE": ServerStatus.REBUILDING,
+    "VERIFY_RESIZE": ServerStatus.REBUILDING,
+    "REVERT_RESIZE": ServerStatus.REBUILDING,
+    "MIGRATING": ServerStatus.REBUILDING,
+    "PASSWORD": ServerStatus.UNKNOWN,
+    "RESCUE": ServerStatus.UNKNOWN,
+    "REBOOT": ServerStatus.UNKNOWN,
+    "HARD_REBOOT": ServerStatus.UNKNOWN,
+    "ERROR": ServerStatus.UNKNOWN,
+    "DELETED": ServerStatus.UNKNOWN,
+    "UNKNOWN": ServerStatus.UNKNOWN,
+}
+
+POLL_BUDGET_S = 120
+POLL_INTERVAL_S = 2.0
+
+POWER_ACTION = {
+    Capability.POWER_ON: "start",
+    Capability.POWER_OFF: "stop",
+    Capability.SHUTDOWN: "stop",
+    Capability.REBOOT: "reboot",
+}
+
+# Poll target on `status` per power action (the provider's own view).
+POWER_TARGET = {
+    Capability.POWER_ON: "ACTIVE",
+    Capability.POWER_OFF: "SHUTOFF",
+    Capability.REBOOT: "ACTIVE",
+    Capability.SHUTDOWN: "SHUTOFF",
+}
+
+CAPABILITIES = frozenset({
+    Capability.POWER_ON, Capability.POWER_OFF, Capability.REBOOT,
+    Capability.SHUTDOWN, Capability.RENAME, Capability.RELABEL,
+    Capability.DELETE,
+})
+
+
+class GcoreAdapter(ProviderAdapter):
+    """Fleet adapter: basic VM instances across all projects/regions under
+    one account token. provider_id "{project}:{region}:{uuid}" is compound
+    and self-routing (a bare uuid cannot say which project/region owns it)."""
+
+    key = "gcore"
+    display_name = "Gcore"
+    capabilities = CAPABILITIES
+
+    def __init__(self, account_id: int, account_name: str, token: str, http=None):
+        super().__init__(account_id, account_name, token, http)
+        # Verified: APIKey scheme, NOT Bearer.
+        self.h = phttp.ProviderHttpClient(
+            API, lambda req: req.headers.__setitem__(
+                "Authorization", f"APIKey {self._token}"),
+            transport=http,
+        )
+
+    # -- reads -----------------------------------------------------------
+
+    async def list_servers(self) -> list[Server]:
+        servers: list[Server] = []
+        projects = await self.h.get_json("/cloud/v1/projects")
+        regions = await self._regions()
+        for project in projects.get("results", []):
+            pid = project.get("id")
+            if pid is None:
+                continue
+            for region in regions:
+                servers.extend(
+                    await self._list_region_instances(pid, region))
+        return servers
+
+    async def get_server(self, provider_id: str) -> Server:
+        pid, region, iid = self._split_id(provider_id)
+        row = await self.h.get_json(
+            f"/cloud/v1/instances/{pid}/{region}/{iid}")
+        return await self._server(row, pid, region)
+
+    async def _regions(self) -> list[str]:
+        """All region ids (public endpoint, no project scope needed)."""
+        # The tokenless public regions endpoint is the same one the catalog
+        # adapter uses; the authenticated /cloud/v1/regions returns the
+        # richer {id, display_name, state, ...} shape - either fits, take ids.
+        data = await self.h.get_json("/cloud/v1/regions")
+        out = [str(r.get("id")) for r in data.get("results", [])
+               if r.get("id") is not None]
+        if out:
+            return out
+        # public endpoint fallback (region list must never be the reason the
+        # whole fleet sync fails)
+        try:
+            data = await self.h.get_json("/cloud/public/v1/regions")
+        except AdapterError:
+            raise AdapterError("gcore region list unavailable")
+        return [str(r.get("id")) for r in data.get("results", [])
+                if r.get("id") is not None]
+
+    async def _list_region_instances(self, pid: Any, region: str) -> list[Server]:
+        rows, offset = [], 0
+        while True:
+            data = await self.h.get_json(
+                f"/cloud/v1/instances/{pid}/{region}",
+                params={"limit": 100, "offset": offset})
+            rows.extend(data.get("results", []))
+            count = data.get("count", len(rows))
+            offset += 100
+            if len(rows) >= count or not data.get("results"):
+                break
+        return [await self._server(row, pid, region) for row in rows]
+
+    async def _server(self, row: dict, pid: Any, region: str) -> Server:
+        iid = str(row.get("id"))
+        flavor = row.get("flavor") or {}
+        fname = flavor.get("flavor_name") or flavor.get("flavor_id")
+
+        price = await self._price_for(pid, region, iid)
+
+        facets = []
+        if fname:
+            facets.append(Facet(label="instance type", value=str(fname)))
+        if flavor.get("vcpus"):
+            facets.append(Facet(label="vcpus", value=str(flavor["vcpus"])))
+        if flavor.get("ram"):
+            # spec: ram is in MiB - render the provider's unit, never guess GB
+            facets.append(Facet(label="ram", value=f"{flavor['ram']} MiB"))
+
+        return Server(
+            provider_id=f"{pid}:{region}:{iid}",
+            name=row.get("name") or iid,
+            adapter=self.key,
+            account_id=self.account_id,
+            status=STATE_MAP.get(str(row.get("status", "")).upper(),
+                                 ServerStatus.UNKNOWN),
+            ipv4=self._ipv4(row),
+            region=str(region),
+            server_type=fname,
+            created=_dt(row.get("created_at")),
+            labels=self._labels(row.get("tags")),
+            monthly_price=price,
+            allowance=Allowance(
+                included_bytes=None,
+                used_bytes=None,
+                window=UNMETERED_NOTE,
+            ),
+            facets=facets,
+            # Gcore exposes name, addresses, tags, created_at, flavor and
+            # price - nothing on the Server model is genuinely missing.
+        )
+
+    @staticmethod
+    def _ipv4(row: dict) -> str | None:
+        """Public IPv4: the type:"floating" address in the addresses map; a
+        fixed addr on the external network is a sane fallback."""
+        best: str | None = None
+        for entries in (row.get("addresses") or {}).values():
+            for a in entries or []:
+                addr = a.get("addr")
+                if addr and "." in addr:
+                    if a.get("type") == "floating":
+                        return addr
+                    best = best or addr
+        return best
+
+    @staticmethod
+    def _labels(tags: list | None) -> dict[str, str] | None:
+        if not tags:
+            return None
+        return {t.get("key", ""): t.get("value", "")
+                for t in tags if t.get("key")}
+
+    async def _price_for(self, pid: Any, region: str, iid: str) -> Money | None:
+        """Per-instance monthly price (discounted price_per_month). Failure or
+        a missing price -> None ("-" in the UI), never zero."""
+        try:
+            data = await self.h.get_json(
+                f"/cloud/v1/pricing/{pid}/{region}/instances/{iid}")
+        except AdapterError:
+            return None
+        monthly = data.get("price_per_month")
+        if monthly is None:
+            return None
+        return Money(amount=Decimal(str(monthly)),
+                     currency=data.get("currency_code") or "USD",
+                     vat_inclusive=None)
+
+    # -- actions ----------------------------------------------------------
+
+    async def perform_action(self, cap: Capability, server_id: str,
+                             params: dict[str, Any]) -> ActionResult:
+        if cap not in self.capabilities:
+            raise AdapterError(f"gcore does not support {cap.value}")
+        pid, region, iid = self._split_id(server_id)
+        base = f"/cloud/v1/instances/{pid}/{region}/{iid}"
+        if cap in POWER_ACTION:
+            # Verified: v2 action endpoint; verbs start/stop/reboot.
+            await self.h.post_json(
+                f"/cloud/v2/instances/{pid}/{region}/{iid}/action",
+                {"action": POWER_ACTION[cap]})
+            return await self._poll(cap, server_id)
+        if cap == Capability.RENAME:
+            r = await self.h.request("PATCH", base, json={"name": params["name"]})
+            if r.status_code != 200:
+                raise AdapterError(f"gcore rename failed: {r.status_code}")
+            # confirm by the provider's view, never the 200 alone
+            row = await self.h.get_json(base)
+            if row.get("name") != params["name"]:
+                raise AdapterError("rename not confirmed by the provider")
+            return ActionResult(detail="renamed")
+        if cap == Capability.RELABEL:
+            r = await self.h.request("PATCH", base,
+                                     json={"tags": params["labels"]})
+            if r.status_code != 200:
+                raise AdapterError(f"gcore relabel failed: {r.status_code}")
+            row = await self.h.get_json(base)
+            if self._labels(row.get("tags")) != params["labels"]:
+                raise AdapterError("relabel not confirmed by the provider")
+            return ActionResult(detail="relabeled")
+        if cap == Capability.DELETE:
+            # Verified: 200 + {"tasks":[...]} (not 204), then the task.
+            r = await self.h.delete(base)
+            if r.status_code != 200:
+                raise AdapterError(f"gcore delete failed: {r.status_code}")
+            await self._poll_tasks(r.json().get("tasks", []))
+            # confirmed gone only when the provider 404s the instance
+            try:
+                await self.h.get_json(base)
+            except AdapterError as e:
+                if "404" in str(e):
+                    return ActionResult(detail="deleted")
+                raise
+            raise AdapterError("delete task finished but instance still lists")
+        raise AdapterError(f"gcore does not support {cap.value}")
+
+    async def _poll(self, cap: Capability, server_id: str) -> ActionResult:
+        """Poll the task list to FINISHED, then the instance's own status to
+        the action's target. A finished task with the wrong status is not
+        success either - the provider's view decides."""
+        pid, region, iid = self._split_id(server_id)
+        want = POWER_TARGET[cap]
+        deadline = time.monotonic() + POLL_BUDGET_S
+        last = "?"
+        while time.monotonic() < deadline:
+            row = await self.h.get_json(
+                f"/cloud/v1/instances/{pid}/{region}/{iid}")
+            last = str(row.get("status", "?"))
+            if last.upper() == want:
+                return ActionResult(detail=f"status now {want}")
+            await asyncio.sleep(POLL_INTERVAL_S)
+        raise ActionTimeout(
+            f"gcore {cap.value} on {server_id} (last status {last})")
+
+    async def _poll_tasks(self, task_ids: list[str]) -> None:
+        """All tasks to FINISHED; ERROR carries an error string (a real
+        failure, never success)."""
+        for tid in task_ids:
+            deadline = time.monotonic() + POLL_BUDGET_S
+            while time.monotonic() < deadline:
+                t = await self.h.get_json(f"/cloud/v1/tasks/{tid}")
+                state = str(t.get("state", "")).upper()
+                if state == "FINISHED":
+                    break
+                if state == "ERROR":
+                    raise AdapterError(
+                        f"gcore task {tid} failed: {t.get('error', '?')}")
+                await asyncio.sleep(POLL_INTERVAL_S)
+            else:
+                raise ActionTimeout(f"gcore task {tid} did not finish")
+
+    @staticmethod
+    def _split_id(provider_id: str) -> tuple[str, str, str]:
+        parts = provider_id.split(":")
+        if len(parts) != 3:
+            raise AdapterError(
+                f"gcore provider_id must be project:region:instance, "
+                f"got {provider_id!r}")
+        return parts[0], parts[1], parts[2]
+
+    async def close(self) -> None:
+        await self.h.aclose()
+
+
+def _dt(s: str | None) -> datetime | None:
+    if not s:
+        return None
+    try:
+        return datetime.fromisoformat(s.replace("Z", "+00:00"))
+    except ValueError:
+        return None
 
 
 class GcoreCatalogAdapter(ProviderAdapter):
@@ -83,7 +429,6 @@ class GcoreCatalogAdapter(ProviderAdapter):
                     billing_model="prepaid pay-as-you-go wallet (per-minute)",
                 ))
         if region_failures:
-            from .base import AdapterError
             raise AdapterError(
                 f"partial catalog refused: {len(region_failures)} region(s) failed "
                 f"({', '.join(region_failures[:5])}) - keeping the previous catalog")

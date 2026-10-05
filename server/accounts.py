@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from . import config, db, secrets
 from .adapters.base import Capability, ProviderAdapter
+from .adapters.gcore import GcoreAdapter
 from .adapters.hetzner import HetznerAdapter
 from .adapters.leaseweb import LeasewebAdapter
 from .adapters.ovh import OvhAdapter
@@ -12,6 +13,7 @@ ADAPTERS: dict[str, type[ProviderAdapter]] = {
     HetznerAdapter.key: HetznerAdapter,
     LeasewebAdapter.key: LeasewebAdapter,
     OvhAdapter.key: OvhAdapter,
+    GcoreAdapter.key: GcoreAdapter,
 }
 
 

@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.4.2 (2026-10-05)
+
+- **Gcore fleet adapter** (basic VMs across all projects/regions under one
+  account token): power actions, rename, relabel, delete — each confirmed
+  by the provider's own view (instance status poll / task poll /
+  post-delete 404), never by an accepted response. Auth uses Gcore's
+  `Authorization: APIKey` scheme (not Bearer). provider_id is compound
+  (`project:region:uuid`) and self-routes like OVH cloud ids. Per-instance
+  discounted monthly price from the pricing endpoint (missing → "-",
+  never zero). Traffic is unmetered by product design — allowance renders
+  as a window note, not fake bytes. Labels come from PATCHable tags
+  (RFC 7386 merge patch). No rebuild — Gcore's spec has no VM rebuild
+  endpoint. The tokenless plan catalog stays as-is. All facts cited in
+  docs/provider-truth.md.
+
 ## 0.4.0 (2026-10-04)
 
 - **OVHcloud fleet adapter** (VPS + Public Cloud instances under one

@@ -124,7 +124,6 @@ function CatalogSourceChip({ source }: { source: 'live' | 'seeded' }) {
 
 // Why each catalog-only provider isn't a fleet adapter (docs/provider-truth.md)
 const CATALOG_NOTES: Record<string, string> = {
-  gcore: 'Plans from the public API; server management needs an API key.',
   tube: 'Plans from their pricing-page data asset; no public API.',
   netlen: 'API needs Bearer + IP allowlist; public list prices curated.',
   lightnode: 'No public API; public list prices curated.',

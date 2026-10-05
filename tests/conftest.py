@@ -248,6 +248,134 @@ def mock_ovh_transport(bearer_only=False):
     return httpx.MockTransport(handler), calls, headers
 
 
+def mock_gcore_transport():
+    """Gcore MockTransport: projects/regions/instances/pricing plus the
+    action->task->status state machine. Stateful like leaseweb's: an action
+    POST returns {"tasks":[...]}; the task GET flips RUNNING->FINISHED on its
+    second poll; the instance status flips only after the task FINISHED;
+    DELETE removes the instance (later GETs 404); PATCH name/tags update the
+    stored instance. Returns (transport, calls, headers) - headers captures
+    Authorization per call for the APIKey assertion."""
+    import re
+
+    import httpx
+
+    calls: list[str] = []
+    headers: list[dict] = []
+
+    task_state = {"state": "NEW", "polls": 0}
+    status_override: dict[str, str] = {}
+    deleted: set[str] = set()
+    patches: dict[str, dict] = {}  # iid -> {"name": ..., "tags": [...]}
+
+    # (project, region) -> [instance fixtures]
+    layout = {
+        ("101", "7"): ["web", "db"],
+        ("102", "12"): ["edge"],
+    }
+    instances = {
+        "web": fixture("gcore/instance_web.json"),
+        "db": fixture("gcore/instance_db.json"),
+        "edge": fixture("gcore/instance_edge.json"),
+    }
+
+    def _row(iid: str) -> dict | None:
+        for row in instances.values():
+            if row["id"] == iid:
+                row = dict(row)
+                if iid in patches:
+                    row.update(patches[iid])
+                if iid in status_override:
+                    row["status"] = status_override[iid]
+                return row
+        return None
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        calls.append(path)
+        headers.append(dict(request.headers))
+        if path == "/cloud/v1/projects":
+            return httpx.Response(200, json=fixture("gcore/projects.json"))
+        if path == "/cloud/v1/regions":
+            return httpx.Response(200, json=fixture("gcore/regions.json"))
+        # instance list: /cloud/v1/instances/{p}/{r}
+        m = re.match(r"^/cloud/v1/instances/([^/]+)/([^/]+)$", path)
+        if m and request.method == "GET":
+            rows = [dict(instances[n]) for n in layout.get((m.group(1), m.group(2)), [])]
+            for r in rows:
+                iid = r["id"]
+                if iid in deleted:
+                    continue
+                if iid in patches:
+                    r.update(patches[iid])
+                if iid in status_override:
+                    r["status"] = status_override[iid]
+            return httpx.Response(200, json={"count": len(rows), "results": rows})
+        # pricing: /cloud/v1/pricing/{p}/{r}/instances/{id}
+        m = re.match(
+            r"^/cloud/v1/pricing/([^/]+)/([^/]+)/instances/([^/]+)$", path)
+        if m and request.method == "GET":
+            if m.group(3) == instances["web"]["id"]:
+                return httpx.Response(200, json=fixture("gcore/pricing_web.json"))
+            if m.group(3) == instances["edge"]["id"]:
+                return httpx.Response(200, json=fixture("gcore/pricing_edge.json"))
+            return httpx.Response(404, json={"message": "no pricing"})
+        # action: /cloud/v2/instances/{p}/{r}/{id}/action
+        m = re.match(
+            r"^/cloud/v2/instances/([^/]+)/([^/]+)/([^/]+)/action$", path)
+        if m and request.method == "POST":
+            body = json.loads(request.content)
+            # status flips now (like leaseweb's mock); the adapter's poll
+            # still has to observe it on a fresh GET
+            status_override[m.group(3)] = \
+                "SHUTOFF" if body["action"] == "stop" else "ACTIVE"
+            task_state["state"] = "RUNNING"
+            task_state["polls"] = 0
+            return httpx.Response(200, json=fixture("gcore/tasks_started.json"))
+        # task poll: /cloud/v1/tasks/{id}
+        m = re.match(r"^/cloud/v1/tasks/([^/]+)$", path)
+        if m and request.method == "GET":
+            task_state["polls"] += 1
+            if task_state["polls"] >= 2:
+                task_state["state"] = "FINISHED"
+            return httpx.Response(200, json={
+                "id": m.group(1), "state": task_state["state"],
+                "created_resources": {"instances": []},
+                "error": None,
+            })
+        # instance detail: /cloud/v1/instances/{p}/{r}/{id}
+        m = re.match(
+            r"^/cloud/v1/instances/([^/]+)/([^/]+)/([^/]+)$", path)
+        if m:
+            iid = m.group(3)
+            if request.method == "DELETE":
+                deleted.add(iid)
+                task_state["state"] = "RUNNING"
+                task_state["polls"] = 0
+                return httpx.Response(200, json=fixture("gcore/tasks_started.json"))
+            if request.method == "PATCH":
+                body = json.loads(request.content)
+                patches.setdefault(iid, {})
+                if "name" in body:
+                    patches[iid]["name"] = body["name"]
+                if "tags" in body:
+                    # RFC 7386 merge patch: full tags list replace
+                    patches[iid]["tags"] = [
+                        {"key": k, "value": v, "read_only": False}
+                        for k, v in body["tags"].items()]
+                row = _row(iid)
+                if row is None:
+                    return httpx.Response(404, json={"message": "no instance"})
+                return httpx.Response(200, json=row)
+            row = _row(iid)
+            if row is None or iid in deleted:
+                return httpx.Response(404, json={"message": "no such instance"})
+            return httpx.Response(200, json=row)
+        return httpx.Response(404, json={"message": f"no fixture for {path}"})
+
+    return httpx.MockTransport(handler), calls, headers
+
+
 class FakeAdapter:
     """Test double implementing the read + action surface for the API smoke
     test. Not a shipped abstraction - lives only in conftest."""

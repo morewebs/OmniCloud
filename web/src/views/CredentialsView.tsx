@@ -245,6 +245,13 @@ function AddAccountDialog({ adapters, onClose, onDone }: {
               client_id:client_secret. Both cover VPS and Public Cloud.
             </Alert>
           )}
+          {effAdapter === 'gcore' && (
+            <Alert severity="info" icon={false}>
+              Create an API token at gcore.com → account icon → Profile →
+              API tokens (administrator or engineer role for full panel
+              features), then paste it here.
+            </Alert>
+          )}
           <TextField label="Account name" value={name}
                      onChange={e => setName(e.target.value)} size="small" required
                      helperText="A label, e.g. main or edge" />

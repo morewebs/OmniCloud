@@ -1,0 +1,36 @@
+{
+  "id": "bbbb6666-7777-8888-9999-aaaaaaaaaaaa",
+  "name": "db-demo-01",
+  "flavor": {
+    "flavor_id": "g3a-standard-2-4-50",
+    "flavor_name": "g3a.standard-2-4-50",
+    "architecture": "x86_64",
+    "os_type": "linux",
+    "vcpus": 2,
+    "ram": 4096,
+    "hardware_description": "Dedicated vCPU"
+  },
+  "addresses": {
+    "external_net": [
+      {"addr": "198.51.100.20", "type": "fixed",
+       "interface_name": "ext-if0", "subnet_id": 501, "subnet_name": "external"}
+    ]
+  },
+  "created_at": "2026-09-10T08:00:00Z",
+  "status": "SHUTOFF",
+  "vm_state": "stopped",
+  "tags": [],
+  "volumes": [{"id": "vol-2222", "delete_on_termination": true}],
+  "security_groups": [{"name": "default"}],
+  "ssh_key_name": null,
+  "project_id": 101,
+  "region": "Frankfurt",
+  "region_id": 7,
+  "instance_description": "postgres replica",
+  "creator_task_id": null,
+  "task_id": null,
+  "task_state": null,
+  "ddos_profile": "default",
+  "blackhole_ports": [],
+  "fixed_ip_assignments": []
+}

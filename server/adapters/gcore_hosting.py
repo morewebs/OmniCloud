@@ -117,8 +117,8 @@ class GcoreHostingAdapter(ProviderAdapter):
         CredentialField(name="url", label="Panel URL", secret=False, default=DEFAULT_URL,
                         help="BILLmanager endpoint of the hosting panel"),
         CredentialField(name="username", label="Panel username", secret=False),
-        CredentialField(name="password", label="Panel password",
-                        help="BILLmanager has no API tokens - the panel login is the credential"),
+        # BILLmanager has no API tokens - the panel login is the credential
+        CredentialField(name="password", label="Panel password"),
     )
 
     def __init__(self, account_id: int, account_name: str, token: str, http=None):

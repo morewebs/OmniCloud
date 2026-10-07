@@ -24,6 +24,24 @@ export interface Facet {
   value: string;
 }
 
+/** One public address. `primary` is the server's own IP - never changed or
+ *  released by the panel; the others are the swappable extras. */
+export interface IpAddress {
+  address: string;
+  version: number;
+  primary: boolean;
+  kind: string;
+  provider_ip_id: string | null;
+  monthly_price: Money | null;
+}
+
+/** What acquiring one IP costs, in the provider's own billing unit. */
+export interface IpCost {
+  price: Money | null;
+  per: 'hour' | 'month' | 'purchase';
+  note: string | null;
+}
+
 export interface Server {
   provider_id: string;
   name: string;
@@ -39,6 +57,7 @@ export interface Server {
   allowance: Allowance | null;
   facets: Facet[];
   not_exposed: string[];
+  ips?: IpAddress[];
   // cache metadata (added by the API)
   last_seen_at?: string;
   traffic_history?: { day: string; bytes_used: number }[];
@@ -71,6 +90,7 @@ export interface AccountRow {
   adapter: string;
   name: string;
   enabled: number;
+  purchases_enabled: number;
   created_at: string;
   last4: string | null;
   scope: string | null;
@@ -80,10 +100,20 @@ export interface AccountRow {
   last_error: string | null;
 }
 
+export interface CredentialField {
+  name: string;
+  label: string;
+  secret: boolean;
+  default: string | null;
+  help: string | null;
+}
+
 export interface AdapterInfo {
   key: string;
   display_name: string;
   capabilities: string[];
+  /** fleet adapters: the inputs of the add-account form */
+  credential_fields?: CredentialField[];
   /** catalog providers only: 'live' | 'seeded' */
   source?: 'live' | 'seeded';
 }
@@ -128,6 +158,17 @@ export const CAPABILITY_LABELS: Record<string, string> = {
   firewall: 'Firewall',
   rebuild: 'Rebuild',
   delete: 'Delete',
+  set_password: 'Set root password',
+  ip_add: 'Add IP',
+  ip_release: 'Release IP',
+  ip_change: 'Change IP',
+};
+
+/** "€0.0038 / hour", "€3.57 / month", "price on order / purchase" */
+export const IP_COST_PER: Record<IpCost['per'], string> = {
+  hour: 'per hour while it exists',
+  month: 'per month',
+  purchase: 'per purchase',
 };
 
 // ---- v2: catalog + orders ----

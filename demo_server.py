@@ -39,7 +39,14 @@ def server(pid, name, adapter, account, status, ip, region, stype, price,
             "projected_overage_cost": overage,
         },
         "facets": [{"label": l, "value": v} for l, v in facets],
+        "ips": [{"address": ip, "version": 4, "primary": True, "kind": "primary",
+                 "provider_ip_id": None, "monthly_price": None}] if ip else [],
     }
+
+
+def extra_ip(addr, kind):
+    return {"address": addr, "version": 4, "primary": False, "kind": kind,
+            "provider_ip_id": f"ip-{addr.rsplit('.', 1)[1]}", "monthly_price": None}
 
 
 HZ = "outgoing traffic since the server was created this billing period"
@@ -79,6 +86,26 @@ SERVERS = [
            not_exposed=["monthly_price", "server_type", "labels"]),
 ]
 
+# Gcore Hosting (BILLmanager): servers with swappable extra IPs - the
+# IP-change API's home turf
+GH = "billing panel: power state not exposed"
+SERVERS += [
+    server("5101", "srv-ams-01", "gcore_hosting", 3, "unknown", "203.0.113.30",
+           "dc-ams-1", "KVM-SSD-2", None, None, None, None, None,
+           facets=[("service", "active"), ("plan", "KVM-SSD-2"),
+                   ("paid until", "2026-11-01"), ("cost (panel)", "9.00 EUR")],
+           not_exposed=["power_state", "allowance", "monthly_price", "labels"]),
+    server("5102", "srv-ams-02", "gcore_hosting", 3, "unknown", "203.0.113.32",
+           "dc-ams-1", "KVM-SSD-1", None, None, None, None, None,
+           facets=[("service", "active"), ("plan", "KVM-SSD-1"),
+                   ("paid until", "2026-10-15"), ("cost (panel)", "5.00 EUR")],
+           not_exposed=["power_state", "allowance", "monthly_price", "labels"]),
+]
+SERVERS[-2]["ips"].append(extra_ip("203.0.113.31", "Public IPv4"))
+SERVERS[-1]["ips"].append(extra_ip("203.0.113.33", "Public IPv4"))
+SERVERS[0]["ips"].append(extra_ip("203.0.113.70", "floating"))
+IP_SEQ = [80]
+
 # Bulk demo servers: a large fleet to exercise pagination + search.
 REGIONS = [("fsn1", "DE"), ("nbg1", "DE"), ("hel1", "FI"), ("ash", "US")]
 for i in range(192):
@@ -113,12 +140,15 @@ FLEET = {
          "servers": [s for s in SERVERS if s["account_id"] == 1]},
         {"id": 2, "adapter": "leaseweb", "name": "account-b2c4", "enabled": True,
          "servers": [s for s in SERVERS if s["account_id"] == 2]},
+        {"id": 3, "adapter": "gcore_hosting", "name": "panel-c5e1", "enabled": True,
+         "servers": [s for s in SERVERS if s["account_id"] == 3]},
     ],
     "sync": {
         "1": {"last_success_at": NOW, "last_error": None, "interval_minutes": 5},
         "2": {"last_success_at": NOW,
               "last_error": "AdapterError: GET /publicCloud/v1/instances: 429 - rate limited",  # noqa: E501
               "interval_minutes": 5},
+        "3": {"last_success_at": NOW, "last_error": None, "interval_minutes": 5},
     },
     "in_progress_actions": [
         {"id": 12, "account_id": 1, "provider_id": "4211115",
@@ -135,12 +165,32 @@ ACCOUNTS = [
      "created_at": "2026-09-25T14:30:00+00:00", "last4": "77c1", "scope": None,
      "cred_created": "2026-09-25T14:30:00+00:00", "last_used_at": NOW,
      "last_success_at": NOW, "last_error": "AdapterError: 429 rate limited"},
+    {"id": 3, "adapter": "gcore_hosting", "name": "panel-c5e1", "enabled": 1,
+     "created_at": "2026-10-07T09:00:00+00:00", "last4": "test", "scope": None,
+     "cred_created": "2026-10-07T09:00:00+00:00", "last_used_at": NOW,
+     "last_success_at": NOW, "last_error": None},
 ]
+for _a, _p in zip(ACCOUNTS, (1, 0, 1)):
+    _a["purchases_enabled"] = _p
+
+TOKEN_FIELD = [{"name": "token", "label": "API token", "secret": True,
+                "default": None, "help": None}]
 
 ADAPTERS = [
     {"key": "hetzner", "display_name": "Hetzner Cloud",
-     "capabilities": ["delete", "firewall", "power_off", "power_on", "reboot",
+     "capabilities": ["delete", "firewall", "ip_add", "ip_change", "ip_release",
+                      "power_off", "power_on", "reboot",
                       "rebuild", "relabel", "rename", "shutdown"]},
+    {"key": "gcore_hosting", "display_name": "Gcore Hosting",
+     "capabilities": ["delete", "ip_add", "ip_change", "ip_release", "set_password"],
+     "credential_fields": [
+         {"name": "url", "label": "Panel URL", "secret": False,
+          "default": "https://hosting.gcore.com/billmgr",
+          "help": "BILLmanager endpoint of the hosting panel"},
+         {"name": "username", "label": "Panel username", "secret": False,
+          "default": None, "help": None},
+         {"name": "password", "label": "Panel password", "secret": True, "default": None,
+          "help": None}]},
     {"key": "leaseweb", "display_name": "LeaseWeb",
      "capabilities": ["delete", "power_off", "power_on", "reboot", "relabel",
                       "rename", "shutdown"]},
@@ -157,6 +207,9 @@ ADAPTERS = [
     {"key": "lightnode", "display_name": "LightNode", "capabilities": [],
      "source": "seeded"},
 ]
+for _ad in ADAPTERS:
+    if not _ad.get("source"):
+        _ad.setdefault("credential_fields", TOKEN_FIELD)
 
 # Shared firewalls across batches of servers (the real Hetzner workflow).
 # rule_detail mirrors the adapter passthrough: Hetzner exposes rules, other
@@ -480,6 +533,74 @@ def revoke_token(tid: int):
         return JSONResponse({"detail": "no such token"}, status_code=404)
     TOKENS = [t for t in TOKENS if t["id"] != tid]
     return {"ok": True}
+
+
+# -- IP-change API: mutates the demo fleet so the IP section works ----------
+
+IP_COST = {"gcore_hosting": {"price": None, "per": "purchase",
+                             "note": "each change orders a new IP at the panel's price"},
+           "hetzner": {"price": {"amount": "3.57", "currency": "EUR", "vat_inclusive": True},
+                       "per": "month", "note": "billed monthly (Hetzner API spec)"}}
+
+
+def _owner(addr):
+    for s in SERVERS:
+        for ip in s.get("ips", []):
+            if ip["address"] == addr:
+                return s, ip
+    return None, None
+
+
+def _new_addr():
+    IP_SEQ[0] += 1
+    return f"203.0.113.{IP_SEQ[0]}"
+
+
+@app.get("/api/ips/{addr}")
+def ip_describe(addr: str):
+    s, ip = _owner(addr)
+    if not s:
+        return JSONResponse({"detail": f"{addr} is not on any synced server"}, status_code=404)
+    acct = next(a for a in ACCOUNTS if a["id"] == s["account_id"])
+    return {"address": addr, "account_id": acct["id"], "account": acct["name"],
+            "adapter": s["adapter"], "provider_id": s["provider_id"], "server": s["name"],
+            "primary": ip["primary"], "changeable": not ip["primary"],
+            "purchases_enabled": bool(acct["purchases_enabled"]),
+            "cost": IP_COST.get(s["adapter"]), "acquisitions_last_24h": 2,
+            "daily_cap": 10, "ips": s["ips"]}
+
+
+@app.post("/api/ips/{addr}/change")
+async def ip_change(addr: str):
+    s, ip = _owner(addr)
+    if not s:
+        return JSONResponse({"detail": f"{addr} is not on any synced server"}, status_code=404)
+    if ip["primary"]:
+        return JSONResponse({"detail": f"{addr} is {s['name']}'s primary IP"}, status_code=409)
+    await asyncio.sleep(2)
+    new = _new_addr()
+    s["ips"] = [i for i in s["ips"] if i["address"] != addr] + [extra_ip(new, ip["kind"])]
+    return {"status": "done", "old_ip": addr, "new_ip": new, "old_released": True,
+            "server": s["name"], "action_id": 99, "order_id": 99,
+            "cost": IP_COST.get(s["adapter"])}
+
+
+@app.post("/api/servers/{account_id}/{provider_id}/ips")
+async def ip_add(account_id: int, provider_id: str):
+    s = next(x for x in SERVERS if x["account_id"] == account_id
+             and x["provider_id"] == provider_id)
+    await asyncio.sleep(2)
+    new = _new_addr()
+    s["ips"].append(extra_ip(new, "additional"))
+    return {"status": "done", "new_ip": new, "action_id": 98, "order_id": 98}
+
+
+@app.delete("/api/servers/{account_id}/{provider_id}/ips/{addr}")
+def ip_release(account_id: int, provider_id: str, addr: str):
+    s = next(x for x in SERVERS if x["account_id"] == account_id
+             and x["provider_id"] == provider_id)
+    s["ips"] = [i for i in s["ips"] if i["address"] != addr or i["primary"]]
+    return {"status": "done", "released": addr, "action_id": 97}
 
 
 @app.get("/api/{path:path}")

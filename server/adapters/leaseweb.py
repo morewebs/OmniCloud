@@ -43,6 +43,7 @@ API = "https://api.leaseweb.com/publicCloud/v1"
 # openAmount and status OPEN|PAID|READY|CANCELLED|OVERDUE; /proforma is the
 # next invoice's running estimate. Post-paid - there is no balance.
 INVOICES_API = "https://api.leaseweb.com/invoices/v1"
+PROVISION_BUDGET_S = 900
 
 # Verified state enum (developer.leaseweb.com instance schema).
 STATE_MAP = {
@@ -359,6 +360,33 @@ class LeasewebAdapter(ProviderAdapter):
                 return ActionResult(detail=f"state now {last}")
             await asyncio.sleep(POLL_INTERVAL)
         raise ActionTimeout(f"leaseweb power action on {server_id} (last state {last})")
+
+    async def provision(self, plan_name: str, location: str, options: dict) -> str:
+        """POST /instances (monthly contract, 1-month term, billed monthly),
+        then poll until the provider reports RUNNING. The OS credentials
+        stay at LeaseWeb (GET .../credentials) - never stored here."""
+        if not options.get("image"):
+            raise AdapterError("choose an image for the new instance")
+        r = await self.h.request("POST", "/instances", retry=False, json={
+            "region": location, "type": plan_name, "imageId": str(options["image"]),
+            "reference": options.get("hostname") or f"omni-{plan_name}",
+            "contractType": "MONTHLY", "contractTerm": 1, "billingFrequency": 1,
+            "rootDiskStorageType": "LOCAL"})
+        self.h._raise_for_status(r)
+        iid = str(r.json().get("id") or "")
+        if not iid:
+            raise AdapterError("leaseweb accepted the order but returned no instance id - "
+                               "check the customer portal before ordering again")
+        deadline = time.monotonic() + PROVISION_BUDGET_S
+        state = "?"
+        while time.monotonic() < deadline:
+            state = str((await self.h.get_json(f"/instances/{iid}")).get("state", "?")).upper()
+            if state == "RUNNING":
+                return iid
+            if state in ("FAILED", "DESTROYED"):
+                raise AdapterError(f"leaseweb instance {iid} ended in state {state}")
+            await asyncio.sleep(POLL_INTERVAL)
+        raise ActionTimeout(f"leaseweb instance {iid} still {state}")
 
     async def get_billing(self) -> Billing:
         data = await self.h.get_json(f"{INVOICES_API}/invoices", params={"limit": 20})

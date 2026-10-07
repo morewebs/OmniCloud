@@ -474,6 +474,37 @@ class HetznerAdapter(ProviderAdapter):
                                   per="month", note=note)
         return IpCost(price=None, per="month", note=note)
 
+    async def provision(self, plan_name: str, location: str, options: dict) -> str:
+        """POST /servers. Every SSH key in the project is attached: with no
+        key Hetzner would answer with a root password, and the panel never
+        handles root passwords."""
+        keys = []
+        for path, params in phttp.iter_pages_hetzner("/ssh_keys"):
+            data = await self.h.get_json(path, params)
+            keys.extend(k["id"] for k in data.get("ssh_keys", []))
+            if params["page"] >= data.get("meta", {}).get("pagination", {}).get("last_page", 1):
+                break
+        if not keys:
+            raise AdapterError("add an SSH key to this Hetzner project first - the panel "
+                               "never handles root passwords")
+        if not options.get("image"):
+            raise AdapterError("choose an image for the new server")
+        r = await self.h.request("POST", "/servers", retry=False, json={
+            "name": options.get("hostname") or f"omni-{plan_name}-{location}",
+            "server_type": plan_name, "location": location, "image": str(options["image"]),
+            "ssh_keys": keys, "start_after_create": True,
+            "public_net": {"enable_ipv4": True, "enable_ipv6": True}})
+        self.h._raise_for_status(r)
+        body = r.json()
+        sid = str((body.get("server") or {}).get("id") or "")
+        if not sid:
+            raise AdapterError("hetzner accepted the order but returned no server id - "
+                               "check the console before ordering again")
+        action = body.get("action") or {}
+        if action.get("id"):
+            await self._poll_action(action["id"], "create server", sid, 300)
+        return sid
+
     async def get_billing(self) -> Billing:
         # the Cloud API has no billing endpoints at all (cloud.spec.json)
         return Billing(model="monthly invoice for the calendar month, in arrears "

@@ -28,6 +28,8 @@ def adapter_info() -> list[dict]:
             "display_name": cls.display_name,
             "capabilities": sorted(c.value for c in cls.capabilities),
             "credential_fields": [f.model_dump() for f in cls.credential_fields],
+            # real server orders: provision() exists for this provider
+            "orders": hasattr(cls, "provision"),
         }
         for cls in ADAPTERS.values()
     ]

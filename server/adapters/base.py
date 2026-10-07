@@ -267,6 +267,14 @@ class ProviderAdapter(ABC):
         """Account billing snapshot; None = adapter has no billing support."""
         return None
 
+    # Server ordering is duck-typed like list_firewalls: an adapter that can
+    # order servers defines
+    #   async def provision(self, plan_name, location, options) -> str
+    # returning the new server's provider_id once the provider's own view
+    # lists it, or raising PaymentRequired when the provider holds it behind
+    # an unpaid order. The order POST is sent exactly once (never retried).
+    # options: {"hostname", "image"} from the order dialog.
+
     async def order_status(self, order_ref: str) -> str | None:
         """Where a provider order left awaiting_payment stands now:
         "unpaid" | "delivered" | "cancelled" | None (unknown/unsupported)."""

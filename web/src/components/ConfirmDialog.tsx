@@ -42,7 +42,7 @@ export function ConfirmDialog({
                       Delete: 'Deleting…', Remove: 'Removing…',
                       'Enable purchases': 'Enabling…', 'Change IP': 'Changing…',
                       Release: 'Releasing…', 'Add IP': 'Adding…',
-                      'Set password': 'Setting…' }[confirmLabel ?? 'Confirm']
+                      'Set password': 'Setting…', Buy: 'Buying…' }[confirmLabel ?? 'Confirm']
                     ?? `${confirmLabel ?? 'Confirm'}ing…`;
   return (
     <Dialog aria-labelledby="omni-dlg-39" open={open} onClose={confirming ? undefined : onClose} maxWidth="xs" fullWidth>

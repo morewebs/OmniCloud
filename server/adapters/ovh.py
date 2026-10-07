@@ -386,31 +386,51 @@ class OvhAdapter(ProviderAdapter):
         sn = self._vps_sn(server_id)
         await self._ensure_auth()
         me = await self.h.get_json("/me")
-        sub = me.get("ovhSubsidiary") or "FR"
         dc = await self.h.get_json(f"/vps/{sn}/datacenter")
-        country = str(dc.get("country") or sub).upper()
+        country = str(dc.get("country") or me.get("ovhSubsidiary") or "FR").upper()
+        await self._cart_checkout("ip", {"planCode": IP_PLAN_CODE, "duration": "P1M",
+                                         "pricingMode": "default", "quantity": 1},
+                                  [("destination", sn), ("country", country)],
+                                  f"extra IP for {sn}")
+        raise AdapterError("unreachable")  # _cart_checkout always raises
+
+    async def _cart_checkout(self, product: str, item: dict,
+                             config: list[tuple[str, str]], what: str) -> None:
+        """Cart -> item -> configuration -> checkout, every POST sent once.
+        Checkout never auto-pays: it always ends in PaymentRequired with
+        the order's pay URL (a wrong order is simply left unpaid)."""
+        me = await self.h.get_json("/me")
 
         async def post(path: str, body: dict | None = None) -> dict:
             r = await self.h.request("POST", path, json=body, retry=False)
             self.h._raise_for_status(r)
             return r.json() if r.content else {}
 
-        cart = await post("/order/cart", {"ovhSubsidiary": sub,
-                                          "description": f"omnicloud extra IP for {sn}"})
+        cart = await post("/order/cart", {"ovhSubsidiary": me.get("ovhSubsidiary") or "FR",
+                                          "description": f"omnicloud: {what}"})
         cid = cart["cartId"]
         await post(f"/order/cart/{cid}/assign")
-        item = await post(f"/order/cart/{cid}/ip", {
-            "planCode": IP_PLAN_CODE, "duration": "P1M",
-            "pricingMode": "default", "quantity": 1})
-        iid = item["itemId"]
-        await post(f"/order/cart/{cid}/item/{iid}/configuration",
-                   {"label": "destination", "value": sn})
-        await post(f"/order/cart/{cid}/item/{iid}/configuration",
-                   {"label": "country", "value": country})
+        added = await post(f"/order/cart/{cid}/{product}", item)
+        iid = added["itemId"]
+        for label, value in config:
+            await post(f"/order/cart/{cid}/item/{iid}/configuration",
+                       {"label": label, "value": value})
         order = await post(f"/order/cart/{cid}/checkout", {
-            "autoPayWithPreferredPaymentMethod": False,
-            "waiveRetractationPeriod": False})
-        raise PaymentRequired("add IP", str(order.get("orderId", "?")), order.get("url"))
+            "autoPayWithPreferredPaymentMethod": False, "waiveRetractationPeriod": False})
+        raise PaymentRequired(what, str(order.get("orderId", "?")), order.get("url"))
+
+    async def provision(self, plan_name: str, location: str, options: dict) -> str:
+        """VPS through the order cart (planCode + vps_datacenter [+ vps_os]):
+        an unpaid order; the VPS appears in the fleet once paid and
+        delivered. Unverified until tested live: the vps_os value format."""
+        await self._ensure_auth()
+        config = [("vps_datacenter", location)]
+        if options.get("image"):
+            config.append(("vps_os", str(options["image"])))
+        await self._cart_checkout("vps", {"planCode": plan_name, "duration": "P1M",
+                                          "pricingMode": "default", "quantity": 1},
+                                  config, f"VPS {plan_name} in {location}")
+        raise AdapterError("unreachable")  # _cart_checkout always raises
 
     async def release_ip(self, server_id: str, address: str) -> None:
         sn = self._vps_sn(server_id)

@@ -114,6 +114,8 @@ export interface AdapterInfo {
   capabilities: string[];
   /** fleet adapters: the inputs of the add-account form */
   credential_fields?: CredentialField[];
+  /** fleet adapters: real server orders are wired (provision) */
+  orders?: boolean;
   /** catalog providers only: 'live' | 'seeded' */
   source?: 'live' | 'seeded';
 }
@@ -204,7 +206,9 @@ export interface Plan {
 export interface OrderRow {
   id: number;
   mode: 'prototype' | 'real';
-  status: 'draft' | 'confirmed' | 'executing' | 'provisioned' | 'failed' | 'cancelled';
+  status: 'draft' | 'confirmed' | 'executing' | 'awaiting_payment' | 'provisioned' | 'failed'
+    | 'cancelled';
+  kind: 'server' | 'ip';
   adapter: string;
   account_id: number | null;
   plan_name: string;
@@ -213,6 +217,9 @@ export interface OrderRow {
   plan_snapshot: string; // JSON
   estimated_monthly: string; // JSON {amount, currency, partial}
   resulting_provider_id: string | null;
+  target_provider_id: string | null;  // kind=ip: the server the IP is for
+  provider_ref: string | null;        // the provider's own order id
+  pay_url: string | null;             // awaiting_payment: where to pay
   requested_by: number;
   username: string | null;
   created_at: string;

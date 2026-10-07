@@ -11,12 +11,13 @@ import Stack from '@mui/material/Stack';
 import TextField from '@mui/material/TextField';
 import Typography from '@mui/material/Typography';
 import { api, fmtCurrency, post } from '../api';
-import type { Plan } from '../types';
+import type { AccountRow, AdapterInfo, Plan } from '../types';
 
 /**
- * Order dialog for a catalog plan. Prototype mode: creates a draft order
- * (auditable, clearly-labeled placeholder execution) - the mode column makes
- * real execution a later flip, and the UI says prototype in plain text.
+ * Order dialog for a catalog plan. The order is REAL when it names an
+ * account of this provider whose purchases are enabled (and the provider's
+ * server ordering is wired); otherwise it is a prototype rehearsal that
+ * creates nothing. The dialog says which, in plain text, before submit.
  */
 const HOSTNAME_RE = /^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?$/;
 
@@ -30,6 +31,16 @@ export function OrderDialog({ plan, onClose, onDone }: {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [imgFilter, setImgFilter] = useState('');
+  const accounts = useQuery<AccountRow[]>({ queryKey: ['accounts'],
+    queryFn: () => api<AccountRow[]>('/api/accounts') });
+  const adapters = useQuery<AdapterInfo[]>({ queryKey: ['adapters'],
+    queryFn: () => api<AdapterInfo[]>('/api/adapters') });
+  const mine = (accounts.data ?? []).filter(a => a.adapter === plan.adapter);
+  const [accountId, setAccountId] = useState<number | ''>('');
+  const effAccount = accountId === '' ? (mine.length === 1 ? mine[0].id : '') : accountId;
+  const acct = mine.find(a => a.id === effAccount);
+  const canOrder = !!adapters.data?.find(a => a.key === plan.adapter)?.orders;
+  const real = !!acct?.purchases_enabled && canOrder;
 
   const images = useQuery<{ id: string; name: string; os: string; version: string | null }[]>({
     queryKey: ['catalog-images', plan.adapter],
@@ -55,9 +66,11 @@ export function OrderDialog({ plan, onClose, onDone }: {
       await post('/api/orders', {
         adapter: plan.adapter, plan_name: plan.name, location: plan.location,
         options: { hostname: hostname || undefined, extra_ips: extraIps,
-                  image: image || undefined },
+                  image: image || undefined,
+                  account_id: effAccount === '' ? undefined : effAccount },
       });
-      onDone(`Draft order created for ${plan.name}`, 'success');
+      onDone(real ? `Draft REAL order created for ${plan.name} - confirm and execute it under Orders`
+                  : `Draft order created for ${plan.name}`, 'success');
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -74,10 +87,33 @@ export function OrderDialog({ plan, onClose, onDone }: {
       <DialogTitle id="omni-dlg-72">Order {plan.name}</DialogTitle>
       <DialogContent>
         <Stack spacing={2} sx={{ pt: 1 }}>
-          <Alert severity="info">
-            Prototype order flow - no server is created or billed. Orders are
-            recorded and can be tracked to completion as a pipeline rehearsal.
-          </Alert>
+          {mine.length > 0 && (
+            <TextField select label="Account" size="small" value={effAccount}
+                       onChange={e => setAccountId(Number(e.target.value))}
+                       helperText={!canOrder
+                         ? `${plan.adapter} server ordering isn't wired in the panel - orders stay prototype`
+                         : acct && !acct.purchases_enabled
+                           ? 'purchases are off for this account - the order stays a prototype'
+                           : undefined}>
+              {mine.map(a => (
+                <MenuItem key={a.id} value={a.id}>
+                  {a.name}{a.purchases_enabled ? ' · purchases on' : ''}
+                </MenuItem>
+              ))}
+            </TextField>
+          )}
+          {real ? (
+            <Alert severity="warning">
+              Real order: executing it buys this server{extraIps > 0 ? ` and ${extraIps} extra IP(s)` : ''} at
+              {' '}{plan.adapter} through account {acct!.name}. Providers that bill per order
+              (OVH) create an unpaid order you pay at their link.
+            </Alert>
+          ) : (
+            <Alert severity="info">
+              Prototype order - no server is created or billed. Orders are
+              recorded and can be tracked to completion as a pipeline rehearsal.
+            </Alert>
+          )}
           {plan.source === 'seeded' && (
             <Alert severity="warning">
               Curated plan data - verify the price with the provider before
@@ -154,7 +190,7 @@ export function OrderDialog({ plan, onClose, onDone }: {
       <DialogActions>
         <Button onClick={onClose} disabled={busy}>Cancel</Button>
         <Button variant="contained" disabled={busy || hostnameBad} onClick={submit}>
-          {busy ? 'Placing order…' : 'Create draft order'}
+          {busy ? 'Placing order…' : real ? 'Create draft real order' : 'Create draft order'}
         </Button>
       </DialogActions>
     </Dialog>

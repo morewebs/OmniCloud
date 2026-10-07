@@ -556,6 +556,12 @@ class GcoreAdapter(ProviderAdapter):
         return IpCost(price=Money(amount=PUBLIC_IP_MONTHLY_USD, currency="USD"),
                       per="month", note=RESERVED_IP_NOTE)
 
+    async def list_images(self) -> list[dict]:
+        # the order dialog asks every live fleet adapter for images; Gcore
+        # server ordering isn't wired (no provision) - an honest empty list
+        # instead of the AttributeError -> 500 /api/catalog/images used to hit
+        return []
+
     async def get_billing(self) -> Billing:
         # the Cloud API has no balance or invoice endpoint (cost reports
         # only, response shape unverified) - say so, invent nothing

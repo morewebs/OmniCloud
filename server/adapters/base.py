@@ -160,6 +160,7 @@ class Billing(BaseModel):
     model: str                        # plain text, adapter-authored: "prepaid wallet"
     balance: Money | None = None
     month_to_date: Money | None = None
+    upcoming: Money | None = None     # the provider's own next-invoice estimate (proforma)
     invoices: list[Invoice] = Field(default_factory=list)
     unpaid_orders: list[Invoice] = Field(default_factory=list)
     renewals: list[Renewal] = Field(default_factory=list)
@@ -264,6 +265,11 @@ class ProviderAdapter(ABC):
 
     async def get_billing(self) -> Billing | None:
         """Account billing snapshot; None = adapter has no billing support."""
+        return None
+
+    async def order_status(self, order_ref: str) -> str | None:
+        """Where a provider order left awaiting_payment stands now:
+        "unpaid" | "delivered" | "cancelled" | None (unknown/unsupported)."""
         return None
 
     def credential(self) -> dict[str, str]:

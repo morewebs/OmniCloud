@@ -33,12 +33,16 @@ from typing import Any
 
 from . import http as phttp
 from .base import (
-    ActionTimeout, ActionResult, AdapterError, Allowance, Capability, Facet,
-    IpAddress, IpOffer, Money, Plan, ProviderAdapter, Server, ServerStatus,
-    TrafficCounting, parse_dt,
+    ActionTimeout, ActionResult, AdapterError, Allowance, Billing, Capability,
+    Facet, Invoice, IpAddress, IpOffer, Money, Plan, ProviderAdapter, Server,
+    ServerStatus, TrafficCounting, parse_dt,
 )
 
 API = "https://api.leaseweb.com/publicCloud/v1"
+# Invoices API v1 (developer.leaseweb.com): invoices carry dueDate,
+# openAmount and status OPEN|PAID|READY|CANCELLED|OVERDUE; /proforma is the
+# next invoice's running estimate. Post-paid - there is no balance.
+INVOICES_API = "https://api.leaseweb.com/invoices/v1"
 
 # Verified state enum (developer.leaseweb.com instance schema).
 STATE_MAP = {
@@ -355,6 +359,32 @@ class LeasewebAdapter(ProviderAdapter):
                 return ActionResult(detail=f"state now {last}")
             await asyncio.sleep(POLL_INTERVAL)
         raise ActionTimeout(f"leaseweb power action on {server_id} (last state {last})")
+
+    async def get_billing(self) -> Billing:
+        data = await self.h.get_json(f"{INVOICES_API}/invoices", params={"limit": 20})
+        invoices = []
+        for inv in data.get("invoices", []):
+            cur = inv.get("currency") or "EUR"
+            money = lambda v: (Money(amount=Decimal(str(v)), currency=cur)  # noqa: E731
+                               if v is not None else None)
+            invoices.append(Invoice(
+                id=str(inv.get("id")), date=parse_dt(inv.get("date")),
+                due_date=parse_dt(inv.get("dueDate")),
+                total=money(inv.get("total")), open_amount=money(inv.get("openAmount")),
+                status=str(inv.get("status") or ""),
+            ))
+        upcoming = None
+        try:
+            pf = await self.h.get_json(f"{INVOICES_API}/invoices/proforma")
+            if pf.get("total") is not None:
+                upcoming = Money(amount=Decimal(str(pf["total"])),
+                                 currency=pf.get("currency") or "EUR")
+        except AdapterError:
+            pass
+        return Billing(model="monthly invoice in arrears (post-paid)",
+                       invoices=invoices, upcoming=upcoming,
+                       not_exposed=["balance", "month_to_date", "renewals"]
+                                   + ([] if upcoming else ["upcoming"]))
 
     async def close(self) -> None:
         await self.h.aclose()

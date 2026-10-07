@@ -70,7 +70,7 @@ import httpx
 
 from . import http as phttp
 from .base import (
-    ActionTimeout, ActionResult, AdapterError, Allowance, Capability, Facet,
+    ActionTimeout, ActionResult, AdapterError, Allowance, Billing, Capability, Facet,
     IpAddress, IpCost, IpOffer, Money, Plan, ProviderAdapter, Server,
     ServerStatus, parse_dt,
 )
@@ -555,6 +555,14 @@ class GcoreAdapter(ProviderAdapter):
         # the catalog's verified uniform public-IP price (externalip_min)
         return IpCost(price=Money(amount=PUBLIC_IP_MONTHLY_USD, currency="USD"),
                       per="month", note=RESERVED_IP_NOTE)
+
+    async def get_billing(self) -> Billing:
+        # the Cloud API has no balance or invoice endpoint (cost reports
+        # only, response shape unverified) - say so, invent nothing
+        return Billing(model="prepaid pay-as-you-go wallet, charged per minute "
+                             "in ~4 EUR/USD deduction steps",
+                       not_exposed=["balance", "invoices", "month_to_date",
+                                    "upcoming", "renewals"])
 
     @staticmethod
     def _split_id(provider_id: str) -> tuple[str, str, str]:

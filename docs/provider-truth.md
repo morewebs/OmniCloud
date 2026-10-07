@@ -398,6 +398,32 @@ renew at their expiry date while the balance covers them
   **Netlen**: `POST /servers/{id}/ips` adds (charges the balance) but no
   release endpoint exists - IP change not offered.
 
+## Billing per provider (verified 2026-10-07 against each official API spec)
+
+- **OVHcloud** (/1.0/me.json): `GET /me/bill?date.from` -> ids; `GET
+  /me/bill/{id}` -> `{billId, date, priceWithTax{value, currencyCode},
+  url, pdfUrl}` (**no paid/due field on the bill itself**); `GET
+  /me/bill/{id}/debt` -> `{dueAmount, dueDate, status PAID|REFUNDED|
+  TO_BE_PAID|UNMATURED|UNPAID|WRITE_OFF}` (no debt record -> panel says
+  "no debt"). Unpaid orders: `GET /me/order` -> `/{id}/status`
+  (notPaid|checking|delivering|delivered|cancelled|...) -> `/{id}` `{date,
+  expirationDate, priceWithTax, url}`. Prepaid credit: `GET
+  /me/credit/balance` -> names -> `{type PREPAID_ACCOUNT|DEPOSIT|BONUS|
+  VOUCHER, amount}`. Renewal: `/vps/{sn}/serviceInfos` `{expiration,
+  renew{automatic}}`.
+- **LeaseWeb** (Invoices API v1): `GET /invoices/v1/invoices` ->
+  `{id, date, dueDate, total, openAmount, currency, status OPEN|PAID|
+  READY|CANCELLED|OVERDUE}`; `GET /invoices/v1/invoices/proforma` ->
+  `{total, currency, ...}` (next invoice's estimate). Post-paid: no
+  balance.
+- **Gcore Cloud**: **no balance or invoice endpoint** (`/iam/clients/me`
+  has no balance; only `/cloud/v1/cost_report/*`, response shape not yet
+  verified - not used). Prepaid PAYG wallet, charged per minute in ~4
+  EUR/USD steps (docs.gcore.com/cloud/billing).
+- **Hetzner Cloud**: **no billing endpoints at all** in cloud.spec.json.
+- **Gcore Hosting**: see its fleet section (`func=payment`,
+  `func=subaccount`, `vds.expiredate`).
+
 ## Unverifiable (docs do not settle these - do not encode as fact)
 
 - Exact counter-reset instant (calendar month vs billing anniversary) for

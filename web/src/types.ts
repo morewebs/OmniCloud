@@ -218,3 +218,45 @@ export interface OrderRow {
   created_at: string;
   updated_at: string;
 }
+
+// ---- billing: per-account snapshot (server/adapters/base.py Billing) ----
+
+export interface Invoice {
+  id: string;
+  date: string | null;
+  due_date: string | null;
+  total: Money | null;
+  open_amount: Money | null;
+  status: string;            // the provider's own word, rendered verbatim
+  url: string | null;
+}
+
+export interface Renewal {
+  provider_id: string;
+  name: string;
+  date: string | null;
+  auto: boolean | null;
+}
+
+export interface Billing {
+  model: string;
+  balance: Money | null;
+  month_to_date: Money | null;
+  upcoming: Money | null;
+  invoices: Invoice[];
+  unpaid_orders: Invoice[];
+  renewals: Renewal[];
+  not_exposed: string[];
+}
+
+export interface BillingAccountRow {
+  account_id: number;
+  adapter: string;
+  name: string;
+  enabled: number;
+  billing: Billing | null;
+  fetched_at: string | null;
+  last_error: string | null;
+  supported: boolean;
+  low_balance_threshold: string | null;
+}

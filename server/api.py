@@ -10,8 +10,8 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from . import (accounts, audit, auth, catalog, config, db, ips, orders, secrets, sync,
-               update, version)
+from . import (accounts, audit, auth, billing, catalog, config, db, ips, orders, secrets,
+               sync, update, version)
 from .adapters.base import Capability
 
 router = APIRouter(prefix="/api")
@@ -324,6 +324,28 @@ def billing_summary(user: auth.User = Depends(auth.require_user)):
 
 
 # -- accounts / credentials -----------------------------------------------------
+
+@router.get("/billing/accounts")
+def billing_accounts(user: auth.User = Depends(auth.require_user)):
+    """Per-account billing snapshot: model, balance, invoices, unpaid
+    orders, renewals - each as the provider's API reports it (not_exposed
+    lists what it doesn't)."""
+    return billing.snapshots()
+
+
+@router.post("/billing/accounts/{account_id}/refresh")
+async def billing_refresh(account_id: int, user: auth.User = Depends(auth.require_admin)):
+    try:
+        snap = await billing.refresh_now(account_id)
+    except ValueError:
+        raise HTTPException(404, "no such account")
+    except secrets.SecretsUnavailable as e:
+        raise HTTPException(409, str(e))
+    row = next((r for r in billing.snapshots() if r["account_id"] == account_id), None)
+    if row and row.get("last_error"):
+        raise HTTPException(502, row["last_error"])
+    return {"ok": True, "billing": snap}
+
 
 class AccountBody(BaseModel):
     adapter: str
@@ -818,6 +840,7 @@ def overview(user: auth.User = Depends(auth.require_user)):
         if sr["last_error"]:
             alerts.append({"kind": "sync", "account_id": sr["account_id"],
                            "error": sr["last_error"][:200]})
+    alerts.extend(billing.alerts())
 
     traffic_days = [{"day": h["day"], "bytes": h["total"]} for h in reversed(hist)]
     # spend per day, per currency (the owner's cost-over-time; same day list as
@@ -941,6 +964,11 @@ def put_settings(body: dict, user: auth.User = Depends(auth.require_admin)):
         if not k.startswith(("sync_", "update_", "ip_", "billing_")):
             raise HTTPException(400, "only sync_*, update_*, ip_* and billing_* "
                                      "settings are editable")
+        if k.startswith("billing_low_balance:") and v not in ("", None):
+            try:
+                float(v)
+            except (TypeError, ValueError):
+                raise HTTPException(400, f"{k} must be a number")
         if k.startswith("ip_change_daily_cap"):
             try:
                 if int(v) < 0:

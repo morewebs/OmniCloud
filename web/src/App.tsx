@@ -109,6 +109,12 @@ function Shell({ user, themeMode, onToggleTheme }: {
       qc.invalidateQueries({ queryKey: ['fleet'] });   // the shell error chip reads fleet.sync
     }
     if (ev === 'catalog_updated') qc.invalidateQueries({ queryKey: ['catalog'] });
+    if (ev === 'billing_updated') {
+      qc.invalidateQueries({ queryKey: ['billing-accounts'] });
+      qc.invalidateQueries({ queryKey: ['overview'] });        // billing alerts
+      qc.invalidateQueries({ queryKey: ['orders'] });          // awaiting_payment settles here
+    }
+    if (ev === 'action') qc.invalidateQueries({ queryKey: ['ip'] });
     if (ev === 'order') {
       qc.invalidateQueries({ queryKey: ['orders'] });
       qc.invalidateQueries({ queryKey: ['overview'] });        // recent orders card

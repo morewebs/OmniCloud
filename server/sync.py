@@ -142,6 +142,10 @@ async def _sync_loop(account_id: int) -> None:
             adapter = accounts.build_adapter(account)
             try:
                 await _sync_once(account, adapter)
+                # billing rides the same adapter on its own slower timer;
+                # it records its own errors and never fails the server sync
+                from . import billing
+                await billing.refresh_if_due(account, adapter)
             finally:
                 with contextlib.suppress(Exception):
                     await adapter.close()

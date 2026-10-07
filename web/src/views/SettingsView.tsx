@@ -86,7 +86,8 @@ export function SettingsView() {
 
   const invalid = Object.entries(form).some(([k, v]) =>
     (k.startsWith('sync_interval:') && (!Number.isInteger(Number(v)) || Number(v) < 1))
-    || (k.startsWith('ip_change_daily_cap') && (v === '' || !Number.isInteger(Number(v)) || Number(v) < 0)));
+    || (k.startsWith('ip_change_daily_cap') && (v === '' || !Number.isInteger(Number(v)) || Number(v) < 0))
+    || (k.startsWith('billing_low_balance:') && v !== '' && (Number.isNaN(Number(v)) || Number(v) < 0)));
 
   const save = async () => {
     setBusy(true); setError(null);
@@ -136,6 +137,22 @@ export function SettingsView() {
         })}
         {accounts.data!.length > 0 && (
           <>
+            <Typography variant="subtitle1">Low-balance alert</Typography>
+            <Typography variant="body2" sx={{ color: 'text.secondary' }}>
+              Overview warns when a prepaid account's balance drops below this
+              amount (in the balance's own currency). Empty = no alert.
+            </Typography>
+            {accounts.data!.map(a => {
+              const key = `billing_low_balance:${a.id}`;
+              const val = form[key] ?? '';
+              const bad = val !== '' && (Number.isNaN(Number(val)) || Number(val) < 0);
+              return (
+                <TextField key={key} className="num" label={`${a.name} (${a.adapter})`}
+                           value={val} type="number" size="small" error={bad}
+                           helperText={bad ? 'an amount ≥ 0, or empty' : undefined}
+                           onChange={e => setForm(f => ({ ...f, [key]: e.target.value }))} />
+              );
+            })}
             <Typography variant="subtitle1">IP acquisitions per 24 h</Typography>
             <Typography variant="body2" sx={{ color: 'text.secondary' }}>
               Cap on IP adds and changes per account (every attempt counts) -

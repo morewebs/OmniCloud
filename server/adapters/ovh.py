@@ -17,7 +17,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any
 
@@ -25,9 +25,9 @@ import httpx
 
 from . import http as phttp
 from .base import (
-    ActionTimeout, ActionResult, AdapterError, Allowance, Capability,
-    Facet, IpAddress, IpCost, IpOffer, Money, PaymentRequired, Plan,
-    ProviderAdapter, Server, ServerStatus, TrafficCounting, parse_dt,
+    ActionTimeout, ActionResult, AdapterError, Allowance, Billing, Capability,
+    Facet, Invoice, IpAddress, IpCost, IpOffer, Money, PaymentRequired, Plan,
+    ProviderAdapter, Renewal, Server, ServerStatus, TrafficCounting, parse_dt,
 )
 
 API = "https://eu.api.ovh.com/1.0"
@@ -442,6 +442,85 @@ class OvhAdapter(ProviderAdapter):
                     return IpCost(price=Money(amount=price, currency="EUR",
                                               vat_inclusive=False), per="month", note=note)
         return IpCost(price=None, per="month", note=note)
+
+    # -- billing (/me): pay-per-order against a registered payment method ------
+
+    @staticmethod
+    def _money(p: dict | None) -> Money | None:
+        """OVH order.Price {value, currencyCode, text}."""
+        if not isinstance(p, dict) or p.get("value") is None:
+            return None
+        return Money(amount=Decimal(str(p["value"])), currency=p.get("currencyCode") or "EUR")
+
+    async def get_billing(self) -> Billing:
+        await self._ensure_auth()
+        not_exposed = ["month_to_date", "upcoming"]
+        now = datetime.now(timezone.utc)
+
+        # prepaid credit (most accounts have none - they pay each order)
+        balance = None
+        try:
+            for name in await self.h.get_json("/me/credit/balance"):
+                b = await self.h.get_json(f"/me/credit/balance/{name}")
+                m = self._money(b.get("amount"))
+                if m is None or b.get("type") not in ("PREPAID_ACCOUNT", "DEPOSIT"):
+                    continue
+                if balance is None:
+                    balance = m
+                elif balance.currency == m.currency:
+                    balance = Money(amount=balance.amount + m.amount, currency=m.currency)
+        except AdapterError:
+            pass
+        if balance is None:
+            not_exposed.append("balance")
+
+        invoices = []
+        since = (now - timedelta(days=90)).date().isoformat()
+        for bid in sorted(await self.h.get_json("/me/bill", params={"date.from": since}),
+                          reverse=True)[:12]:
+            b = await self.h.get_json(f"/me/bill/{bid}")
+            r = await self.h.request("GET", f"/me/bill/{bid}/debt")
+            debt = r.json() if r.status_code == 200 else None
+            invoices.append(Invoice(
+                id=str(b.get("billId", bid)), date=parse_dt(b.get("date")),
+                due_date=parse_dt(debt.get("dueDate")) if debt else None,
+                total=self._money(b.get("priceWithTax")),
+                open_amount=self._money(debt.get("dueAmount")) if debt else None,
+                # the provider's own debt status; no debt record = nothing owed on it
+                status=str(debt.get("status")) if debt else "no debt",
+                url=b.get("url"),
+            ))
+
+        unpaid = []
+        since = (now - timedelta(days=30)).date().isoformat()
+        for oid in sorted(await self.h.get_json("/me/order", params={"date.from": since}),
+                          reverse=True)[:15]:
+            if await self.h.get_json(f"/me/order/{oid}/status") != "notPaid":
+                continue
+            o = await self.h.get_json(f"/me/order/{oid}")
+            price = self._money(o.get("priceWithTax"))
+            unpaid.append(Invoice(id=str(oid), date=parse_dt(o.get("date")),
+                                  due_date=parse_dt(o.get("expirationDate")),
+                                  total=price, open_amount=price, status="notPaid",
+                                  url=o.get("url")))
+
+        renewals = []
+        for sn in await self.h.get_json("/vps"):
+            infos = await self.h.get_json(f"/vps/{sn}/serviceInfos")
+            renew = infos.get("renew") or {}
+            renewals.append(Renewal(provider_id=f"vps:{sn}", name=sn,
+                                    date=parse_dt(infos.get("expiration")),
+                                    auto=renew.get("automatic") if renew else None))
+        return Billing(model="pay per order; services renew monthly against the "
+                             "registered payment method",
+                       balance=balance, invoices=invoices, unpaid_orders=unpaid,
+                       renewals=renewals, not_exposed=not_exposed)
+
+    async def order_status(self, order_ref: str) -> str | None:
+        await self._ensure_auth()
+        st = await self.h.get_json(f"/me/order/{order_ref}/status")
+        return {"delivered": "delivered", "cancelled": "cancelled",
+                "notPaid": "unpaid"}.get(st)
 
     async def _vps_action(self, cap: Capability, sn: str,
                           params: dict) -> ActionResult:

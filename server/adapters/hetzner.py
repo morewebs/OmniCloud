@@ -35,7 +35,7 @@ from typing import Any
 
 from . import http as phttp
 from .base import (
-    ActionTimeout, ActionResult, AdapterError, Allowance, Capability, Facet,
+    ActionTimeout, ActionResult, AdapterError, Allowance, Billing, Capability, Facet,
     IpAddress, IpCost, IpOffer, Money, Plan, ProviderAdapter, Server,
     ServerStatus, TrafficCounting, UnsupportedAction, parse_dt,
 )
@@ -473,6 +473,13 @@ class HetznerAdapter(ProviderAdapter):
                                               vat_inclusive=True),
                                   per="month", note=note)
         return IpCost(price=None, per="month", note=note)
+
+    async def get_billing(self) -> Billing:
+        # the Cloud API has no billing endpoints at all (cloud.spec.json)
+        return Billing(model="monthly invoice for the calendar month, in arrears "
+                             "(or prepaid credit)",
+                       not_exposed=["balance", "invoices", "month_to_date",
+                                    "upcoming", "renewals"])
 
     async def _confirm_put(self, r, server_id: str, new_name: str | None = None) -> None:  # noqa: ARG002
         """PUT /servers/{id} responds 200 with the updated server."""

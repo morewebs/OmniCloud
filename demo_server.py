@@ -435,7 +435,46 @@ OVERVIEW = {
     ],
 }
 
+def _eur(v):
+    return {"amount": v, "currency": "EUR", "vat_inclusive": None}
+
+
+BILLING_ACCOUNTS = [
+    {"account_id": 1, "adapter": "hetzner", "name": "account-a7f3", "enabled": 1,
+     "supported": True, "fetched_at": NOW, "last_error": None, "low_balance_threshold": None,
+     "billing": {"model": "monthly invoice for the calendar month, in arrears (or prepaid credit)",
+                 "balance": None, "month_to_date": None, "upcoming": None,
+                 "invoices": [], "unpaid_orders": [], "renewals": [],
+                 "not_exposed": ["balance", "invoices", "month_to_date", "upcoming", "renewals"]}},
+    {"account_id": 2, "adapter": "leaseweb", "name": "account-b2c4", "enabled": 1,
+     "supported": True, "fetched_at": NOW, "last_error": None, "low_balance_threshold": None,
+     "billing": {"model": "monthly invoice in arrears (post-paid)",
+                 "balance": None, "month_to_date": None, "upcoming": _eur("64.20"),
+                 "invoices": [
+                     {"id": "00000412", "date": "2026-10-01T00:00:00", "due_date": "2026-10-15T00:00:00",
+                      "total": _eur("120.50"), "open_amount": _eur("120.50"), "status": "OPEN", "url": None},
+                     {"id": "00000388", "date": "2026-09-01T00:00:00", "due_date": "2026-09-15T00:00:00",
+                      "total": _eur("99.00"), "open_amount": _eur("0"), "status": "PAID", "url": None}],
+                 "unpaid_orders": [], "renewals": [],
+                 "not_exposed": ["balance", "month_to_date", "renewals"]}},
+    {"account_id": 3, "adapter": "gcore_hosting", "name": "panel-c5e1", "enabled": 1,
+     "supported": True, "fetched_at": NOW, "last_error": None, "low_balance_threshold": "10",
+     "billing": {"model": "prepaid balance; each server renews from it at its expiry date",
+                 "balance": _eur("7.40"), "month_to_date": None, "upcoming": None,
+                 "invoices": [
+                     {"id": "P-0302", "date": "2026-10-01T00:00:00", "due_date": None,
+                      "total": _eur("9.00"), "open_amount": _eur("9.00"), "status": "new", "url": None}],
+                 "unpaid_orders": [],
+                 "renewals": [
+                     {"provider_id": "5102", "name": "srv-ams-02", "date": "2026-10-15T00:00:00",
+                      "auto": False},
+                     {"provider_id": "5101", "name": "srv-ams-01", "date": "2026-11-01T00:00:00",
+                      "auto": True}],
+                 "not_exposed": ["month_to_date"]}},
+]
+
 ROUTES = {
+    "/api/billing/accounts": BILLING_ACCOUNTS,
     "/api/auth/status": {"needs_setup": False},
     "/api/auth/me": {"id": 1, "username": "demo-admin", "role": "admin"},
     "/api/fleet": FLEET,

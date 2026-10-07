@@ -362,7 +362,7 @@ class GcoreHostingAdapter(ProviderAdapter):
     # -- billing -----------------------------------------------------------------
 
     async def get_billing(self) -> Billing:
-        not_exposed = ["month_to_date"]
+        not_exposed = ["month_to_date", "upcoming"]
         balance = None
         try:
             sub = await self._call("subaccount")

@@ -31,6 +31,13 @@ class Capability(StrEnum):
     FIREWALL = "firewall"
     REBUILD = "rebuild"
     DELETE = "delete"
+    SET_PASSWORD = "set_password"  # perform_action params: {"password": str}
+    # IP management runs on its own routes (api.py "ips" section), never
+    # through perform_action: acquiring an IP spends money and has its own
+    # guards (purchases_enabled, daily change cap).
+    IP_ADD = "ip_add"          # acquire one more swappable IP on a server
+    IP_RELEASE = "ip_release"  # release one swappable IP
+    IP_CHANGE = "ip_change"    # swap one swappable IP for a fresh one (add + release)
 
 
 class ServerStatus(StrEnum):
@@ -71,6 +78,18 @@ class Facet(BaseModel):
     value: str
 
 
+class IpAddress(BaseModel):
+    """One address on a server. `primary` marks the address the provider
+    ties to the server itself: the IP-change path never touches it. The
+    swappable addresses are the extra ones (additional/floating/reserved)."""
+    address: str
+    version: int = 4
+    primary: bool = False
+    kind: str = ""                     # provider's own word: "additional", "floating", ...
+    provider_ip_id: str | None = None  # provider handle when it differs from the address
+    monthly_price: Money | None = None
+
+
 class Server(BaseModel):
     provider_id: str
     name: str
@@ -86,6 +105,9 @@ class Server(BaseModel):
     allowance: Allowance | None = None
     facets: list[Facet] = Field(default_factory=list)
     not_exposed: list[str] = Field(default_factory=list)
+    # every public address the provider reports; empty + "ips" in
+    # not_exposed when the API has no per-server IP list
+    ips: list[IpAddress] = Field(default_factory=list)
 
 
 class ActionResult(BaseModel):
@@ -101,6 +123,60 @@ class IpOffer(BaseModel):
     price: Money | None = None    # per additional IP, if published
     limit: int | None = None      # max per server, if documented
     note: str | None = None      # e.g. "available on request via support"
+
+
+class IpCost(BaseModel):
+    """What acquiring one more IP costs, in the provider's own billing unit:
+    a reserved IP billed by the minute is cheap to churn, a monthly one is
+    a fresh month's rent per change. price=None = not published."""
+    price: Money | None = None
+    per: str                      # "hour" | "month" | "purchase"
+    note: str | None = None
+
+
+class Invoice(BaseModel):
+    """A bill/invoice/unpaid order as the provider reports it. status is the
+    provider's own word (paid, unpaid, OVERDUE, notPaid...) - rendered
+    verbatim, never mapped onto a guessed common vocabulary."""
+    id: str
+    date: datetime | None = None
+    due_date: datetime | None = None
+    total: Money | None = None
+    open_amount: Money | None = None  # still to pay; None = not exposed
+    status: str = ""
+    url: str | None = None            # provider's own view/pay page
+
+
+class Renewal(BaseModel):
+    provider_id: str
+    name: str
+    date: datetime | None = None
+    auto: bool | None = None          # auto-renew from balance, if exposed
+
+
+class Billing(BaseModel):
+    """Per-account billing snapshot. Every field the provider's API lacks is
+    listed in not_exposed (rendered "not exposed", never zero)."""
+    model: str                        # plain text, adapter-authored: "prepaid wallet"
+    balance: Money | None = None
+    month_to_date: Money | None = None
+    invoices: list[Invoice] = Field(default_factory=list)
+    unpaid_orders: list[Invoice] = Field(default_factory=list)
+    renewals: list[Renewal] = Field(default_factory=list)
+    not_exposed: list[str] = Field(default_factory=list)
+
+
+class CredentialField(BaseModel):
+    """One input of an account's credential form. Adapters with more than
+    one field receive their credential as a JSON object string."""
+    name: str
+    label: str
+    secret: bool = True
+    default: str | None = None
+    help: str | None = None
+
+
+TOKEN_FIELD = CredentialField(name="token", label="API token")
 
 
 class Plan(BaseModel):
@@ -136,6 +212,7 @@ class ProviderAdapter(ABC):
     key: str = "abstract"
     display_name: str = "abstract"
     capabilities: frozenset[Capability] = frozenset()
+    credential_fields: tuple[CredentialField, ...] = (TOKEN_FIELD,)
 
     def __init__(self, account_id: int, account_name: str, token: str, http=None):
         # `http` injection is the test seam (MockTransport); production leaves it None.
@@ -169,6 +246,41 @@ class ProviderAdapter(ABC):
                              attach: bool = True) -> None:
         raise UnsupportedAction(self.key, Capability.FIREWALL)
 
+    # -- IPs: each returns only after the provider's own view confirms ----
+
+    async def add_ip(self, server_id: str) -> IpAddress:
+        """Acquire one more public IPv4 and attach it to the server. Spends
+        money. Raises PaymentRequired when the provider holds the IP behind
+        an unpaid order."""
+        raise UnsupportedAction(self.key, Capability.IP_ADD)
+
+    async def release_ip(self, server_id: str, address: str) -> None:
+        """Detach and give back one swappable IP. Never the primary."""
+        raise UnsupportedAction(self.key, Capability.IP_RELEASE)
+
+    async def ip_cost(self, server_id: str) -> IpCost | None:
+        """What one add_ip costs; None = the provider doesn't say."""
+        return None
+
+    async def get_billing(self) -> Billing | None:
+        """Account billing snapshot; None = adapter has no billing support."""
+        return None
+
+    def credential(self) -> dict[str, str]:
+        """Multi-field credentials arrive as a JSON object string."""
+        return _parse_credential(self._token)
+
+
+def _parse_credential(token: str) -> dict[str, str]:
+    import json
+    try:
+        data = json.loads(token)
+    except ValueError:
+        raise AdapterError("stored credential is not in this provider's field format")
+    if not isinstance(data, dict):
+        raise AdapterError("stored credential is not in this provider's field format")
+    return {k: str(v) for k, v in data.items()}
+
 
 class AdapterError(Exception):
     """Base for adapter failures; message is safe to show in the UI.
@@ -194,6 +306,16 @@ class UnsupportedAction(AdapterError):
     def __init__(self, adapter: str, cap: Capability):
         super().__init__(f"{adapter} does not support {cap.value}",
                          status_code=None)
+
+
+class PaymentRequired(AdapterError):
+    """Provider accepted the order but delivers only after payment (an OVH
+    order left notPaid, a BILLmanager payment with a pay URL). Never
+    rendered as success: the caller records awaiting_payment."""
+    def __init__(self, what: str, order_ref: str, pay_url: str | None = None):
+        super().__init__(f"{what}: provider order {order_ref} awaits payment")
+        self.order_ref = order_ref
+        self.pay_url = pay_url
 
 
 class ActionTimeout(AdapterError):

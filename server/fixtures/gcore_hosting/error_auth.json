@@ -1,0 +1,1 @@
+{"doc": {"error": {"$type": "auth", "msg": {"$": "Authorization required"}}}}

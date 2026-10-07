@@ -1,0 +1,2 @@
+{"doc": {"$func": "service.ip.edit", "domain": {"$": "srv-ams-01"},
+  "slist": [{"$name": "type", "val": [{"$key": "7", "$": "Public IPv4"}]}]}}

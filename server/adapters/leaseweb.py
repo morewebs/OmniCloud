@@ -34,7 +34,7 @@ from typing import Any
 from . import http as phttp
 from .base import (
     ActionTimeout, ActionResult, AdapterError, Allowance, Capability, Facet,
-    IpOffer, Money, Plan, ProviderAdapter, Server, ServerStatus,
+    IpAddress, IpOffer, Money, Plan, ProviderAdapter, Server, ServerStatus,
     TrafficCounting, parse_dt,
 )
 
@@ -148,7 +148,19 @@ class LeasewebAdapter(ProviderAdapter):
             ipv4 = next((ip["ip"] for ip in (row.get("ips") or [])
                          if ip.get("version") == 4), None)
 
+        # list only: the Public Cloud API has no endpoint to add or release
+        # an IP (GET list, reverse lookup and null-route only)
+        ips = [IpAddress(address=ip["ip"], version=int(ip.get("version") or 4),
+                         primary=ip.get("mainIp") is not False or ip["ip"] == ipv4,
+                         kind="main" if ip.get("mainIp") else "additional")
+               for ip in (row.get("ips") or [])
+               if ip.get("ip") and str(ip.get("networkType", "PUBLIC")).upper() == "PUBLIC"]
+        null_routed = next((ip["ip"] for ip in row.get("ips") or []
+                            if ip.get("nullRouted")), None)
+
         facets = []
+        if null_routed:
+            facets.append(Facet(label="null-routed", value=null_routed))
         if itype:
             facets.append(Facet(label="instance type", value=str(itype)))
         speed = (row.get("resources") or {}).get("publicNetworkSpeed") or {}
@@ -173,6 +185,7 @@ class LeasewebAdapter(ProviderAdapter):
             labels=None,
             monthly_price=price,
             allowance=allowance,
+            ips=ips,
             facets=facets,
             not_exposed=["labels", "allowance_bytes_per_instance"],
         )

@@ -162,9 +162,13 @@ def test_adapters_lists_fleet_and_catalog_providers(client):
     # fleet adapters (incl. the registered real ones) carry capabilities and
     # no catalog source
     fleet = {a["key"] for a in rows if not a.get("source")}
-    assert fleet == {"fake", "hetzner", "leaseweb", "ovh", "gcore"}
+    assert fleet == {"fake", "hetzner", "leaseweb", "ovh", "gcore", "gcore_hosting"}
     assert row_by_key["ovh"]["capabilities"], "ovh is a full fleet adapter"
     assert row_by_key["gcore"]["capabilities"], "gcore is a full fleet adapter"
+    assert "ip_change" in row_by_key["gcore_hosting"]["capabilities"]
+    # the hosting panel signs in with username + password, not a token
+    assert [f["name"] for f in row_by_key["gcore_hosting"]["credential_fields"]] == \
+        ["url", "username", "password"]
     # catalog-only providers carry their honest source label
     for key in ("tube",):
         assert row_by_key[key]["source"] == "live"

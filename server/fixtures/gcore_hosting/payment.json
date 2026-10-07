@@ -1,0 +1,6 @@
+{"doc": {"$func": "payment", "elem": [
+  {"id": {"$": "301"}, "number": {"$": "P-0301"}, "create_date": {"$": "2026-09-01"},
+   "subaccountamount_iso": {"$": "20.00 EUR"}, "status": {"$": "2"}},
+  {"id": {"$": "302"}, "number": {"$": "P-0302"}, "create_date": {"$": "2026-10-01"},
+   "subaccountamount_iso": {"$": "9.00 EUR"}, "status": {"$": "1"}}
+]}}

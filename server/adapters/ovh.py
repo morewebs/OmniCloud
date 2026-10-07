@@ -26,8 +26,8 @@ import httpx
 from . import http as phttp
 from .base import (
     ActionTimeout, ActionResult, AdapterError, Allowance, Capability,
-    Facet, IpOffer, Money, Plan, ProviderAdapter, Server, ServerStatus,
-    TrafficCounting, parse_dt,
+    Facet, IpAddress, IpCost, IpOffer, Money, PaymentRequired, Plan,
+    ProviderAdapter, Server, ServerStatus, TrafficCounting, parse_dt,
 )
 
 API = "https://eu.api.ovh.com/1.0"
@@ -85,7 +85,16 @@ CLOUD_WINDOW = ("outgoing (egress) traffic, current calendar month; "
 CAPABILITIES = frozenset({
     Capability.POWER_ON, Capability.POWER_OFF, Capability.REBOOT,
     Capability.SHUTDOWN, Capability.RENAME, Capability.DELETE,
+    Capability.IP_ADD, Capability.IP_RELEASE, Capability.IP_CHANGE,
 })
+
+# Additional IP for a VPS: the order cart (the old /order/vps/{sn}/ip path
+# is gone). Checkout NEVER auto-pays: it creates an unpaid order whose
+# url the operator pays - a wrong order can simply be left unpaid.
+# Unverified until tested live: the cart configuration labels (destination
+# = the VPS serviceName, country = its datacenter's country).
+IP_PLAN_CODE = "ip-failover-ripe"
+POLL_IP_RELEASE_S = 120
 
 
 class OvhAdapter(ProviderAdapter):
@@ -197,15 +206,25 @@ class OvhAdapter(ProviderAdapter):
             return await self._cloud_server(project, row)
         raise AdapterError(f"unknown OVH provider_id: {provider_id}")
 
+    async def _vps_ips(self, sn: str) -> list[IpAddress]:
+        """Every address on the VPS: type primary|additional per the spec."""
+        out: list[IpAddress] = []
+        for ip in await self.h.get_json(f"/vps/{sn}/ips"):
+            d = await self.h.get_json(f"/vps/{sn}/ips/{ip}")
+            addr = d.get("ipAddress") or ip
+            if any(x.address == addr for x in out):
+                continue
+            out.append(IpAddress(address=addr, version=6 if d.get("version") == "v6" else 4,
+                                 primary=d.get("type") != "additional",
+                                 kind=str(d.get("type") or "primary")))
+        return out
+
     async def _vps_server(self, sn: str) -> Server:
         row = await self.h.get_json(f"/vps/{sn}")
         infos = await self.h.get_json(f"/vps/{sn}/serviceInfos")
-        ipv4 = None
-        for ip in await self.h.get_json(f"/vps/{sn}/ips"):
-            detail = await self.h.get_json(f"/vps/{sn}/ips/{ip}")
-            if detail.get("version") == "v4":
-                ipv4 = detail["ipAddress"]
-                break
+        ips = await self._vps_ips(sn)
+        ipv4 = next((i.address for i in ips if i.version == 4 and i.primary),
+                    next((i.address for i in ips if i.version == 4), None))
         model = row.get("model") or {}
         facets = [
             Facet(label="product", value="vps"),
@@ -235,6 +254,7 @@ class OvhAdapter(ProviderAdapter):
             monthly_price=None,  # the /vps API carries no price at all
             allowance=None,      # unmetered product - no usage endpoint
             facets=facets,
+            ips=ips,
             not_exposed=["traffic usage", "price", "labels"],
         )
 
@@ -262,9 +282,13 @@ class OvhAdapter(ProviderAdapter):
         elif monthly_billing:
             facets.append(Facet(label="billing", value="hourly"))
         ipv4 = None
+        ips = []
         for ip in row.get("ipAddresses") or []:
             if ip.get("version") == 4 and not ipv4:
                 ipv4 = ip.get("ip")
+            if ip.get("ip") and ip.get("type") != "private":
+                ips.append(IpAddress(address=ip["ip"], version=int(ip.get("version") or 4),
+                                     primary=True, kind=str(ip.get("type") or "public")))
         allowance = None
         used = row.get("currentMonthOutgoingTraffic")
         if used is not None:
@@ -289,6 +313,7 @@ class OvhAdapter(ProviderAdapter):
             monthly_price=price,
             allowance=allowance,
             facets=facets,
+            ips=ips,
             not_exposed=["labels", "overage price"],
         )
 
@@ -347,6 +372,76 @@ class OvhAdapter(ProviderAdapter):
             _, project, sid = server_id.split(":", 2)
             return await self._cloud_action(cap, project, sid, params)
         raise AdapterError(f"unknown OVH provider_id: {server_id}")
+
+    # -- IPs: VPS additional IPs ------------------------------------------------
+
+    @staticmethod
+    def _vps_sn(server_id: str) -> str:
+        if not server_id.startswith("vps:"):
+            raise AdapterError("additional IPs are managed for OVH VPS only, "
+                               "not Public Cloud instances")
+        return server_id[4:]
+
+    async def add_ip(self, server_id: str) -> IpAddress:
+        sn = self._vps_sn(server_id)
+        await self._ensure_auth()
+        me = await self.h.get_json("/me")
+        sub = me.get("ovhSubsidiary") or "FR"
+        dc = await self.h.get_json(f"/vps/{sn}/datacenter")
+        country = str(dc.get("country") or sub).upper()
+
+        async def post(path: str, body: dict | None = None) -> dict:
+            r = await self.h.request("POST", path, json=body, retry=False)
+            self.h._raise_for_status(r)
+            return r.json() if r.content else {}
+
+        cart = await post("/order/cart", {"ovhSubsidiary": sub,
+                                          "description": f"omnicloud extra IP for {sn}"})
+        cid = cart["cartId"]
+        await post(f"/order/cart/{cid}/assign")
+        item = await post(f"/order/cart/{cid}/ip", {
+            "planCode": IP_PLAN_CODE, "duration": "P1M",
+            "pricingMode": "default", "quantity": 1})
+        iid = item["itemId"]
+        await post(f"/order/cart/{cid}/item/{iid}/configuration",
+                   {"label": "destination", "value": sn})
+        await post(f"/order/cart/{cid}/item/{iid}/configuration",
+                   {"label": "country", "value": country})
+        order = await post(f"/order/cart/{cid}/checkout", {
+            "autoPayWithPreferredPaymentMethod": False,
+            "waiveRetractationPeriod": False})
+        raise PaymentRequired("add IP", str(order.get("orderId", "?")), order.get("url"))
+
+    async def release_ip(self, server_id: str, address: str) -> None:
+        sn = self._vps_sn(server_id)
+        await self._ensure_auth()
+        ips = {i.address: i for i in await self._vps_ips(sn)}
+        if address not in ips:
+            return  # already gone
+        if ips[address].primary:
+            raise AdapterError(f"{address} is the VPS's primary IP - never released here")
+        await self.h.delete(f"/vps/{sn}/ips/{address}")
+        deadline = time.monotonic() + POLL_IP_RELEASE_S
+        while address in await self.h.get_json(f"/vps/{sn}/ips"):
+            if time.monotonic() >= deadline:
+                raise ActionTimeout(f"release {address} from {sn}")
+            await asyncio.sleep(POLL_INTERVAL)
+
+    async def ip_cost(self, server_id: str) -> IpCost | None:
+        try:
+            data = await self.h.get_json("/order/catalog/formatted/ip",
+                                         params={"ovhSubsidiary": "FR"})
+        except AdapterError:
+            data = {}
+        note = ("ordered as an unpaid OVH order (pay it at the order link); "
+                "billed monthly from delivery")
+        for p in data.get("plans", []):
+            if p.get("planCode") == IP_PLAN_CODE:
+                price = OvhCatalogAdapter._monthly_price(p.get("pricings", []))
+                if price is not None:
+                    return IpCost(price=Money(amount=price, currency="EUR",
+                                              vat_inclusive=False), per="month", note=note)
+        return IpCost(price=None, per="month", note=note)
 
     async def _vps_action(self, cap: Capability, sn: str,
                           params: dict) -> ActionResult:

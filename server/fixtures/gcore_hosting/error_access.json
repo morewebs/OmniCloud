@@ -1,0 +1,1 @@
+{"doc": {"error": {"$type": "access", "$object": "subaccount", "msg": {"$": "Insufficient privileges to access the function"}}}}

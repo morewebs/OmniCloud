@@ -329,7 +329,9 @@ renew at their expiry date while the balance covers them
   `out=xml|xjson|devel|text`; `out=json` is what the panel's own JS (and the
   operator's script) uses. **Auth**: `func=auth&username&password` returns
   `doc.auth.$` (session id), passed as `auth=`; valid 1 h after the last
-  request. The adapter POSTs the login so the password is never in a URL.
+  request. The adapter POSTs the login so the password is never in a URL,
+  and only to a public https host (internal addresses refused - see
+  SECURITY.md).
 - **Shape**: `{"doc": {...}}`, scalars `{"$": "v"}`, lists in `doc.elem` (a
   single row arrives as a bare object), errors in `doc.error.msg.$`.
 - `func=vds` - servers: `id, domain, ip, pricelist, cost, expiredate,

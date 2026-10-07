@@ -36,7 +36,7 @@ The call is synchronous and can take a few minutes while the provider provisions
 | Status | Meaning |
 |---|---|
 | `200` | `{"status": "done", "old_ip", "new_ip", "old_released": true, "action_id", "order_id", "cost"}`. If `old_released` is `false` and a `warning` is present, the new IP works but the old one could not be released and is still billing. |
-| `202` | `{"status": "awaiting_payment", "pay_url", "provider_ref"}` (OVH). The provider created an unpaid order. Nothing is delivered or charged until someone pays at `pay_url`. |
+| `202` | `{"status": "awaiting_payment", "pay_url", "provider_ref"}` (OVH). The provider created an unpaid order. Nothing is delivered or charged until someone pays at `pay_url` (always `https://`; `null` if the provider gave no safe link - pay it in the provider's panel by `provider_ref`). |
 | `403` | Purchases are off for this account, or the token lacks the role or scope. |
 | `404` | The IP isn't on any synced server. |
 | `409` | It's the primary IP, the provider has no API to change IPs, or another IP operation is already running on this server. |

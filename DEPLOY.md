@@ -80,6 +80,11 @@ unbuffer); its action tools return `in_progress` after `wait_seconds`
 - **Gcore Hosting** and **Tube-hosting** have no API tokens: the panel signs
   in with the account login. Consider a dedicated login where the provider
   offers sub-users.
+- **Gcore Hosting panel URL** (another BILLmanager panel works too) must be
+  a public `https://` host on port 443, without `user@` in it. A host that
+  resolves to a loopback, private, link-local or other internal address is
+  refused before the login is sent - point it at the panel's public name,
+  not an internal IP.
 - **Purchases** (IP changes/adds, real server orders) stay off until an
   admin enables them per account under Credentials. Set the per-account
   daily IP cap (Settings) before handing an `ip_change` token to a script.

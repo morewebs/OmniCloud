@@ -41,8 +41,8 @@
   LightNode's seed offered extra IPs on one plan only.
 - **MCP server** at `/mcp` (Streamable HTTP, stateless JSON): AI agents
   drive the panel through 50 tools covering the whole REST surface —
-  fleet, allowances, billing, catalog, orders, server actions, firewalls,
-  accounts, users, settings, audit, updates — plus three prompts
+  fleet, allowances, billing, catalog, orders, server actions, IPs,
+  firewalls, accounts, users, settings, audit, updates — plus three prompts
   (fleet triage, cost review, plan comparison). Auth is personal API tokens
   only (`Authorization: Bearer`; session cookies are refused, so no CSRF
   surface), re-checked on every call. Each tool calls the REST route it
@@ -59,6 +59,13 @@
   restart, while Refresh / force-sync still answered ok. Force-sync's wake
   signal now also reaches the loop thread-safely.
 - App startup/shutdown moved from `on_event` to a lifespan handler.
+- **Security:** the Gcore Hosting panel URL (the panel password is POSTed
+  to it) must be `https://` on the default port with no userinfo; its host
+  is resolved before every login and refused if it points at loopback,
+  private, link-local (cloud metadata), CGNAT, multicast or reserved
+  addresses - nothing, not even the login, is sent there. Provider-supplied
+  pay/invoice links are kept and rendered only if `https://`, so a hostile
+  panel can't plant a `javascript:` link.
 
 ## 0.4.2 (2026-10-05)
 

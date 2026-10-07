@@ -94,6 +94,18 @@ def test_requires_valid_bearer_token(client, tokens):
     assert rpc(client, None, "tools/list").status_code == 401
 
 
+def test_ip_change_scoped_token_gets_no_mcp(client, tokens):
+    """MCP authenticates outside require_user's scope check: an ip_change
+    token (a remote rotation script's) must not reach any tool."""
+    client.post("/api/auth/login", json={"username": "admin", "password": "pw123456"},
+                headers=HDRS)
+    scoped = client.post("/api/auth/tokens", json={"name": "rotator", "scope": "ip_change"},
+                         headers=HDRS).json()["token"]
+    client.cookies.clear()
+    assert rpc(client, scoped, "tools/list").status_code == 401
+    assert rpc(client, tokens[0], "tools/list").status_code == 200
+
+
 def test_initialize_and_tool_surface(client, tokens):
     admin, _ = tokens
     init = rpc(client, admin, "initialize", {
@@ -106,7 +118,10 @@ def test_initialize_and_tool_surface(client, tokens):
         assert name in tools
     destructive = {n for n, t in tools.items()
                    if (t.get("annotations") or {}).get("destructiveHint")}
-    assert {"rebuild_server", "delete_server", "delete_account", "apply_update"} <= destructive
+    assert {"rebuild_server", "delete_server", "delete_account", "apply_update",
+            "release_ip"} <= destructive
+    for name in ("describe_ip", "change_ip", "add_ip", "get_account_billing"):
+        assert name in tools
     assert (tools["get_overview"]["annotations"] or {}).get("readOnlyHint") is True
     prompts = {p["name"] for p in rpc(client, admin, "prompts/list").json()["result"]["prompts"]}
     assert prompts == {"fleet_triage", "cost_review", "compare_plans"}

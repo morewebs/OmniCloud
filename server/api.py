@@ -10,7 +10,8 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from . import accounts, audit, auth, catalog, config, db, orders, secrets, sync, update, version
+from . import (accounts, audit, auth, billing, catalog, config, db, ips, orders, secrets,
+               sync, update, version)
 from .adapters.base import Capability
 
 router = APIRouter(prefix="/api")
@@ -177,6 +178,7 @@ def _set_cookie(response: Response, token: str) -> None:
 
 class TokenBody(BaseModel):
     name: str = Field(min_length=1, max_length=100)
+    scope: str = "full"  # or "ip_change": only the IP-change API (auth.TOKEN_SCOPES)
 
 
 @router.get("/auth/tokens")
@@ -189,8 +191,11 @@ def list_tokens(user: auth.User = Depends(auth.require_user)):
 def create_token(body: TokenBody, user: auth.User = Depends(auth.require_user)):
     # any signed-in user can mint their own token (viewers keep viewer role
     # through it); the plaintext is shown exactly once, then only the hash.
-    token_id, plaintext = auth.create_api_token(user.id, body.name)
-    return {"id": token_id, "name": body.name, "token": plaintext}
+    try:
+        token_id, plaintext = auth.create_api_token(user.id, body.name, body.scope)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return {"id": token_id, "name": body.name, "scope": body.scope, "token": plaintext}
 
 
 @router.delete("/auth/tokens/{token_id}")
@@ -320,10 +325,35 @@ def billing_summary(user: auth.User = Depends(auth.require_user)):
 
 # -- accounts / credentials -----------------------------------------------------
 
+@router.get("/billing/accounts")
+def billing_accounts(user: auth.User = Depends(auth.require_user)):
+    """Per-account billing snapshot: model, balance, invoices, unpaid
+    orders, renewals - each as the provider's API reports it (not_exposed
+    lists what it doesn't)."""
+    return billing.snapshots()
+
+
+@router.post("/billing/accounts/{account_id}/refresh")
+async def billing_refresh(account_id: int, user: auth.User = Depends(auth.require_admin)):
+    try:
+        snap = await billing.refresh_now(account_id)
+    except ValueError:
+        raise HTTPException(404, "no such account")
+    except secrets.SecretsUnavailable as e:
+        raise HTTPException(409, str(e))
+    row = next((r for r in billing.snapshots() if r["account_id"] == account_id), None)
+    if row and row.get("last_error"):
+        raise HTTPException(502, row["last_error"])
+    return {"ok": True, "billing": snap}
+
+
 class AccountBody(BaseModel):
     adapter: str
     name: str = Field(min_length=1)
-    token: str = Field(min_length=1)
+    # single-token adapters send `token`; multi-field ones (username +
+    # password panels) send `fields` per the adapter's credential_fields
+    token: str | None = Field(default=None, min_length=1)
+    fields: dict[str, str] | None = None
     scope: str | None = None
 
 
@@ -335,7 +365,8 @@ def get_accounts(user: auth.User = Depends(auth.require_user)):
 @router.post("/accounts")
 def create_account(body: AccountBody, admin: auth.User = Depends(auth.require_admin)):
     try:
-        account_id = accounts.create_account(body.adapter, body.name, body.token, body.scope)
+        account_id = accounts.create_account(body.adapter, body.name, body.token,
+                                             body.scope, body.fields)
     except secrets.SecretsUnavailable as e:
         raise HTTPException(503, str(e))
     except ValueError as e:
@@ -348,6 +379,8 @@ def create_account(body: AccountBody, admin: auth.User = Depends(auth.require_ad
 class AccountPatch(BaseModel):
     enabled: bool | None = None
     name: str | None = None
+    # real purchases (IPs, servers) through this account's provider API
+    purchases_enabled: bool | None = None
 
 
 @router.patch("/accounts/{account_id}")
@@ -363,6 +396,11 @@ def patch_account(account_id: int, body: AccountPatch, user=Depends(auth.require
     if body.name is not None:
         with db.connect() as conn:
             conn.execute("UPDATE accounts SET name=? WHERE id=?", (body.name, account_id))
+    if body.purchases_enabled is not None:
+        accounts.set_purchases_enabled(account_id, body.purchases_enabled)
+        audit.record(user.id, "account.purchases_" +
+                     ("enable" if body.purchases_enabled else "disable"),
+                     f"account/{account_id}")
     audit.record(user.id, "account.update", f"account/{account_id}")
     return {"ok": True}
 
@@ -425,6 +463,8 @@ def check_action(account_id: int, kind: str) -> None:
         cap = Capability(kind)
     except ValueError:
         raise HTTPException(400, f"unknown action kind: {kind}")
+    if cap in _IP_CAPS:
+        raise HTTPException(400, f"{kind} has its own guarded route under /api/ips")
     if adapter_cls and cap not in adapter_cls.capabilities:
         # 409: capability absent from this adapter - rendered as absent in UI,
         # this check is for direct API users.
@@ -442,6 +482,65 @@ async def run_action(account_id: int, provider_id: str, body: ActionBody,
     if row["status"] == "failed":
         raise HTTPException(502, row["detail"] or "action failed")
     return {"action_id": action_id, "status": row["status"], "detail": row["detail"]}
+
+
+_IP_CAPS = {Capability.IP_ADD, Capability.IP_RELEASE, Capability.IP_CHANGE}
+
+
+# -- IPs: the IP-change API (docs/ip-change.md) -------------------------------------
+# An operator's own server calls these with an ip_change-scoped token: look
+# its IP up, change it, collect the result. Acquisitions spend money - the
+# guards (purchases toggle, daily cap, primary refusal) live in ips.py.
+
+def _ip_http(e: ips.IpError) -> HTTPException:
+    return HTTPException(e.status, {"message": str(e), **e.extra} if e.extra else str(e))
+
+
+@router.get("/ips/{address}")
+async def ip_describe(address: str, user: auth.User = Depends(auth.require_user)):
+    try:
+        return await ips.describe(address)
+    except ips.IpError as e:
+        raise _ip_http(e)
+
+
+class IpChangeBody(BaseModel):
+    # release the old IP before acquiring (servers at their extra-IP cap)
+    release_first: bool = False
+
+
+@router.post("/ips/{address}/change")
+async def ip_change(address: str, body: IpChangeBody | None = None,
+                    user: auth.User = Depends(auth.require_admin)):
+    try:
+        result = await ips.change(address, user.id,
+                                  release_first=bool(body and body.release_first))
+    except ips.IpError as e:
+        raise _ip_http(e)
+    if result.get("status") == "awaiting_payment":
+        return JSONResponse(result, status_code=202)
+    return result
+
+
+@router.post("/servers/{account_id}/{provider_id}/ips")
+async def ip_add(account_id: int, provider_id: str,
+                 user: auth.User = Depends(auth.require_admin)):
+    try:
+        result = await ips.add(account_id, provider_id, user.id)
+    except ips.IpError as e:
+        raise _ip_http(e)
+    if result.get("status") == "awaiting_payment":
+        return JSONResponse(result, status_code=202)
+    return result
+
+
+@router.delete("/servers/{account_id}/{provider_id}/ips/{address}")
+async def ip_release(account_id: int, provider_id: str, address: str,
+                     user: auth.User = Depends(auth.require_admin)):
+    try:
+        return await ips.release(account_id, provider_id, address, user.id)
+    except ips.IpError as e:
+        raise _ip_http(e)
 
 
 class FirewallBody(BaseModel):
@@ -560,17 +659,19 @@ def list_actions(user: auth.User = Depends(auth.require_user)):
 
 @router.get("/actions/{action_id}")
 def get_action(action_id: int, user: auth.User = Depends(auth.require_user)):
+    """One action's outcome - how an IP-change caller whose connection
+    dropped collects the result (`result` is its structured outcome)."""
     with db.connect() as conn:
         row = conn.execute(
             """SELECT a.id, a.account_id, a.provider_id, a.kind, a.status, a.detail,
-                      a.created_at, a.completed_at, u.username
+                      a.result, a.created_at, a.completed_at, u.username
                FROM actions a LEFT JOIN users u ON u.id = a.requested_by
-               WHERE a.id=?""",
-            (action_id,),
-        ).fetchone()
+               WHERE a.id=?""", (action_id,)).fetchone()
     if not row:
         raise HTTPException(404, "no such action")
-    return dict(row)
+    out = dict(row)
+    out["result"] = json.loads(out["result"]) if out["result"] else None
+    return out
 
 
 @router.get("/audit")
@@ -744,6 +845,7 @@ def overview(user: auth.User = Depends(auth.require_user)):
         if sr["last_error"]:
             alerts.append({"kind": "sync", "account_id": sr["account_id"],
                            "error": sr["last_error"][:200]})
+    alerts.extend(billing.alerts())
 
     traffic_days = [{"day": h["day"], "bytes": h["total"]} for h in reversed(hist)]
     # spend per day, per currency (the owner's cost-over-time; same day list as
@@ -855,16 +957,29 @@ def patch_user(user_id: int, body: UserPatch, user: auth.User = Depends(auth.req
 def get_settings(user: auth.User = Depends(auth.require_admin)):
     with db.connect() as conn:
         rows = conn.execute("SELECT key, value FROM settings WHERE key LIKE 'sync_%' "
-                            "OR key LIKE 'update_%'").fetchall()
+                            "OR key LIKE 'update_%' OR key LIKE 'ip_%' "
+                            "OR key LIKE 'billing_%'").fetchall()
     return {r["key"]: r["value"] for r in rows}
 
 
 @router.put("/settings")
 def put_settings(body: dict, user: auth.User = Depends(auth.require_admin)):
     # validate ALL keys first - a rejected one must not leave a partial write
-    for k in body:
-        if not (k.startswith("sync_") or k.startswith("update_")):
-            raise HTTPException(400, "only sync_* and update_* settings are editable")
+    for k, v in body.items():
+        if not k.startswith(("sync_", "update_", "ip_", "billing_")):
+            raise HTTPException(400, "only sync_*, update_*, ip_* and billing_* "
+                                     "settings are editable")
+        if k.startswith("billing_low_balance:") and v not in ("", None):
+            try:
+                float(v)
+            except (TypeError, ValueError):
+                raise HTTPException(400, f"{k} must be a number")
+        if k.startswith("ip_change_daily_cap"):
+            try:
+                if int(v) < 0:
+                    raise ValueError
+            except (TypeError, ValueError):
+                raise HTTPException(400, f"{k} must be a whole number >= 0")
     for k, v in body.items():
         db.set_setting(k, str(v))
     audit.record(user.id, "settings.update", "settings")

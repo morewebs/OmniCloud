@@ -317,6 +317,159 @@ docs.gcore.com developer-tools REST API docs)
   discount_percent, currency_code`. Panel uses the discounted
   `price_per_month`; missing/404 → None ("-", never zero).
 
+## Gcore Hosting fleet (hosting.gcore.com - BILLmanager 6; verified 2026-10-07
+against docs.ispsystem.com BILLmanager 6 API reference, docs.gcore.com
+hosting articles, and the panel calls of the operator's own gcore-panel.sh)
+
+A different product and account from Gcore Cloud: prepaid balance, servers
+renew at their expiry date while the balance covers them
+(docs.gcore.com/hosting/payments/renew-your-server).
+
+- **Endpoint**: the panel URL itself, `{url}?func=<name>&out=json`. Docs list
+  `out=xml|xjson|devel|text`; `out=json` is what the panel's own JS (and the
+  operator's script) uses. **Auth**: `func=auth&username&password` returns
+  `doc.auth.$` (session id), passed as `auth=`; valid 1 h after the last
+  request. The adapter POSTs the login so the password is never in a URL.
+- **Shape**: `{"doc": {...}}`, scalars `{"$": "v"}`, lists in `doc.elem` (a
+  single row arrives as a bare object), errors in `doc.error.msg.$`.
+- `func=vds` - servers: `id, domain, ip, pricelist, cost, expiredate,
+  autoprolong, item_status` (1 ordered, 2 active, 3 suspended, 4 deleted,
+  5 processing). **Service state, not VM power state** - power state is not
+  exposed; `cost` carries no stated period, so it is shown verbatim, never
+  as a monthly price.
+- `func=service.ip elid=<server>` - IPs: `id, name (address), is_main,
+  no_delete, type`. Primary = the is_main row (else no_delete; else the first
+  row - protecting an extra IP by mistake is recoverable, releasing the main
+  one is not).
+- **Extra IPs** (docs.gcore.com .../buy-an-additional-ip-address): order
+  form takes a quantity only; "after the order is processed, the new IP
+  addresses appear in the IP address list" - **no preview of the address**.
+  Up to 14 extra IPv4 per server; **KVM-SSD-1: 2**. No "change IP" feature;
+  moving an IP between servers is a paid support request. Refunds: "contact
+  support" only (.../request-a-refund). Virtual servers have a one-month
+  minimum term (.../delete-a-virtual-server).
+- `service.ip.edit plid=<server>` (form: slist `type`, `domain`) then the
+  same func with `sok=ok` orders; `service.ip.delete elid=<ip> plid sok=ok`;
+  `service.changepassword elid passwd confirm sok=ok`; `vds.delete elid
+  sok=ok`.
+- **Billing**: `func=payment` (status 1 new, 2 paid, 3 promised, 4 credited,
+  5 awaiting refund, 6 refunded, 7 fraudulent, 8 initiated, 9 cancelled;
+  `subaccountamount_iso` e.g. "9.00 EUR"); `func=subaccount` (balance) is
+  documented with access level admin - a client-account refusal reads
+  "not exposed".
+- **Unverified until tested on a live account**: whether `count=1` on
+  `service.ip.edit` is honoured; whether an IP order ever returns a
+  `billorder`/payment instead of charging the balance (handled as
+  awaiting_payment if it does); client access to `func=subaccount`.
+
+## Extra IPs per provider (the IP-change API, docs/ip-change.md)
+
+- **Gcore Cloud**: reserved fixed IPs, `type: external`
+  (cloud_api.yaml; docs.gcore.com/cloud/networking/ip-address/
+  create-and-configure-a-reserved-ip-address): created standalone with the
+  address visible before attaching; "the price remains the same whether
+  the IP is assigned or not"; "billing applies only for the time from
+  creating an IP to deleting it"; cloud billing is per minute
+  (docs.gcore.com/cloud/billing). Attach: `POST .../attach_interface
+  {type: reserved_fixed_ip, port_id}`; detach: `.../detach_interface
+  {ip_address, port_id}`; delete: `DELETE /cloud/v1/reserved_fixed_ips/{p}/
+  {r}/{port_id}`. Price preview `POST /cloud/v1/pricing/{p}/{r}/
+  reserved_fixed_ips`. **Unverified**: the task's `created_resources` key
+  naming the new port (adapter accepts `ports` or `reserved_fixed_ips`) and
+  the pricing request body.
+- **Hetzner**: Floating IPs (cloud.spec.json): `POST /floating_ips {type,
+  server}` returns 201 `{floating_ip, action|null}` assigned at creation;
+  `DELETE /floating_ips/{id}` auto-unassigns; billed on a monthly basis;
+  price per location in `GET /pricing` `floating_ips[].prices[]`. The
+  server's `public_net.ipv4` is its Primary IP (max one IPv4 Primary IP per
+  server).
+- **OVH VPS**: `GET /vps/{sn}/ips/{ip}` -> `type: primary|additional`;
+  `DELETE /vps/{sn}/ips/{ip}` releases an additional IP; ordering goes
+  through the cart (`/order/vps/{sn}/ip` no longer exists): `POST
+  /order/cart` -> `/assign` -> `/order/cart/{id}/ip {planCode:
+  ip-failover-ripe, duration, pricingMode, quantity}` -> item configuration
+  -> `/checkout {autoPayWithPreferredPaymentMethod: false}` -> `{orderId,
+  url}` (unpaid). **Unverified**: configuration labels `destination` (VPS
+  serviceName) and `country` (the VPS datacenter's country), duration `P1M`.
+- **LeaseWeb Public Cloud**: `ips[]` on the instance (`mainIp`,
+  `nullRouted`, `networkType`) - **no API to add or release an IP** (only
+  list, reverse lookup and null-route). Listed only.
+- **Tube-hosting, LightNode**: no add/release IP endpoint in their APIs.
+  **Netlen**: `POST /servers/{id}/ips` adds (charges the balance) but no
+  release endpoint exists - IP change not offered.
+
+## Netlen, Tube-hosting, LightNode fleets (verified 2026-10-07)
+
+### Netlen (netlen.com.tr/api, v2.0.3)
+- `Authorization: Bearer <key>`; **IP allowlist mandatory** (403
+  `AUTH_IP_NOT_ALLOWED`); envelope `{data, meta{pagination{page, per_page,
+  total, total_pages}}}`, errors `{error{code, message, errors[]}}`.
+- `GET /servers` (list rows have `power_state: null`) + `GET /servers/{id}`:
+  `status active|suspended|pending|cancelled`, `power_state running|
+  stopped|starting|stopping|provisioning|migrating|error|unknown`,
+  `network{ipv4{address}, extra_ips[{address, version}]}`, `billing{amount,
+  currency, cycle monthly|yearly, next_billing_at, deletable}`.
+- `POST /servers/{id}/actions/{start|stop|reboot}` -> 202
+  `data.operation{id}`; `GET /operations/{id}` queued|running|completed|
+  failed.
+- `POST /servers/{id}/ips {version}` -> 201 `{address, price, charged,
+  balance}` - charged to the balance at once; **no release endpoint**.
+  `GET /billing/balance`; invoices are panel-only (501).
+
+### Tube-hosting (api.tube-hosting.com/docs - OpenAPI "v0", generated, unlisted)
+- `POST /login {mail, password, device}` -> `{accessToken, refreshToken}`.
+  The spec declares no security scheme: **Bearer header unverified**.
+- `/servicegroups/currents` is typed only "object" (parsed defensively for
+  nested Service objects `{id, type VPS|DEDICATED|IPV4BUNDLE|BYOIP,
+  serviceGroupId, endDate, price, runtime}`); `GET /vps/{id}` -> `{coreCount,
+  memory, diskSpace, osDisplayName, primaryIPv4{ipv4{ipv4}}}`; `GET
+  /vps/{id}/status` -> `{status}`; `POST /vps/{id}/start|stop|shutdown|
+  restart`; `PUT /vps/{id}/password {password}`.
+- `GET /me` -> `balance` integer - **read as euro-cents** (the verified
+  templates.json convention; unverified for /me). `GET /payments/invoices`
+  -> `{id, time, finished, items[{unitPrice, quantity}]}` - no due date,
+  no paid status. No IP add/release endpoint.
+
+### LightNode (apidoc.lightnode.com)
+- `x-open-token: <token>` against `https://openapi.lightnode.com`.
+- `GET /region/list` -> `{regions[{regionCode, zones[{zoneCode}]}]}`; `GET
+  /instance/list?regionCode&zoneCode` (both required, pageSize <= 50) ->
+  `{instances[], rowCount}`; instance `{ecsResourceUUID, instanceName,
+  ecsStatus (only STARTED documented), ecsPendingStatus (NONE when idle),
+  publicIpAddress, secondaryPublicIpInfoList[], freeFlow (GB),
+  usedFlow (unit unstated - read as GB), createTime}`.
+- `POST /instance/start {ecsResourceUUID}` -> `{asyncTaskUUID}`; `GET
+  /asynctask/getResult` -> `{asyncTaskInfo{taskStatus PROCESSING|FINISHED,
+  processResult SUCCESS|FAIL|RETRY|CANCEL}}`. `/instance/stop` and
+  `/instance/reboot` pages exist; paths assumed to mirror start.
+- No IP, billing, balance or expiry endpoints.
+
+## Billing per provider (verified 2026-10-07 against each official API spec)
+
+- **OVHcloud** (/1.0/me.json): `GET /me/bill?date.from` -> ids; `GET
+  /me/bill/{id}` -> `{billId, date, priceWithTax{value, currencyCode},
+  url, pdfUrl}` (**no paid/due field on the bill itself**); `GET
+  /me/bill/{id}/debt` -> `{dueAmount, dueDate, status PAID|REFUNDED|
+  TO_BE_PAID|UNMATURED|UNPAID|WRITE_OFF}` (no debt record -> panel says
+  "no debt"). Unpaid orders: `GET /me/order` -> `/{id}/status`
+  (notPaid|checking|delivering|delivered|cancelled|...) -> `/{id}` `{date,
+  expirationDate, priceWithTax, url}`. Prepaid credit: `GET
+  /me/credit/balance` -> names -> `{type PREPAID_ACCOUNT|DEPOSIT|BONUS|
+  VOUCHER, amount}`. Renewal: `/vps/{sn}/serviceInfos` `{expiration,
+  renew{automatic}}`.
+- **LeaseWeb** (Invoices API v1): `GET /invoices/v1/invoices` ->
+  `{id, date, dueDate, total, openAmount, currency, status OPEN|PAID|
+  READY|CANCELLED|OVERDUE}`; `GET /invoices/v1/invoices/proforma` ->
+  `{total, currency, ...}` (next invoice's estimate). Post-paid: no
+  balance.
+- **Gcore Cloud**: **no balance or invoice endpoint** (`/iam/clients/me`
+  has no balance; only `/cloud/v1/cost_report/*`, response shape not yet
+  verified - not used). Prepaid PAYG wallet, charged per minute in ~4
+  EUR/USD steps (docs.gcore.com/cloud/billing).
+- **Hetzner Cloud**: **no billing endpoints at all** in cloud.spec.json.
+- **Gcore Hosting**: see its fleet section (`func=payment`,
+  `func=subaccount`, `vds.expiredate`).
+
 ## Unverifiable (docs do not settle these - do not encode as fact)
 
 - Exact counter-reset instant (calendar month vs billing anniversary) for

@@ -5,6 +5,7 @@ import Alert from '@mui/material/Alert';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import Chip from '@mui/material/Chip';
+import Link from '@mui/material/Link';
 import Dialog from '@mui/material/Dialog';
 import DialogContent from '@mui/material/DialogContent';
 import DialogTitle from '@mui/material/DialogTitle';
@@ -24,14 +25,15 @@ function est(o: OrderRow): { amount: string; currency: string; partial?: boolean
 }
 import { PageHeader } from '../components/PageHeader';
 import { EmptyState } from '../components/EmptyState';
+import { ConfirmDialog } from '../components/ConfirmDialog';
 import { Toast } from '../components/Toast';
 import { usePageTitle } from '../usePageTitle';
 import type { ToastMsg } from '../components/Toast';
 import type { OrderRow } from '../types';
 
 const PAST: Record<string, string> = { confirm: 'confirmed', cancel: 'cancelled', execute: 'executed' };
-const STATUS_COLOR: Record<string, 'success' | 'error' | 'warning' | undefined> = {
-  provisioned: 'success', failed: 'error', executing: 'warning',
+const STATUS_COLOR: Record<string, 'success' | 'error' | 'warning' | 'info' | undefined> = {
+  provisioned: 'success', failed: 'error', executing: 'warning', awaiting_payment: 'info',
 };
 
 export function OrdersView() {
@@ -48,6 +50,8 @@ export function OrdersView() {
   // one order action in flight at a time: a double-click must not fire
   // duplicate confirm/cancel/execute mutations
   const [actBusy, setActBusy] = useState<number | null>(null);
+  // a REAL order's Execute spends money at the provider: typed confirm first
+  const [executeReal, setExecuteReal] = useState<OrderRow | null>(null);
 
   const act = async (id: number, verb: string) => {
     if (actBusy != null) return;
@@ -70,7 +74,7 @@ export function OrdersView() {
   return (
     <Stack spacing={3}>
       <PageHeader title="Orders"
-                  subtitle="Prototype pipeline: draft, confirm, execute. No servers are created or billed." />
+                  subtitle="Draft, confirm, execute. Prototype orders create nothing; real orders (an account with purchases on) buy at the provider." />
 
       {orders.data!.length === 0
         ? <EmptyState mark="orders" line="No orders yet. Browse the catalog to place one."
@@ -103,7 +107,10 @@ export function OrdersView() {
                             }}
                             sx={{ cursor: 'pointer' }}>
                     <TableCell className="num">{o.id}</TableCell>
-                    <TableCell sx={{ fontWeight: 500 }}>{o.plan_name}</TableCell>
+                    <TableCell sx={{ fontWeight: 500 }}>
+                      {o.kind === 'ip' ? `extra IP${o.resulting_provider_id ? ` ${o.resulting_provider_id}` : ''}`
+                                       : o.plan_name}
+                    </TableCell>
                     <TableCell><Chip size="small" variant="outlined" label={o.adapter} /></TableCell>
                     <TableCell>{o.location}</TableCell>
                     <TableCell align="right" className="num">
@@ -117,7 +124,11 @@ export function OrdersView() {
                         )}
                         <Chip size="small" variant="outlined"
                               color={STATUS_COLOR[o.status]}
-                              label={o.status} />
+                              label={o.status.replace('_', ' ')} />
+                        {o.status === 'awaiting_payment' && o.pay_url && (
+                          <Link href={o.pay_url} target="_blank" rel="noreferrer"
+                                onClick={e => e.stopPropagation()} variant="body2">pay</Link>
+                        )}
                       </Stack>
                     </TableCell>
                     <TableCell>{o.username}</TableCell>
@@ -136,7 +147,11 @@ export function OrdersView() {
                           {o.status === 'confirmed' && (
                             <>
                               <Button size="small" variant="contained" disabled={actBusy === o.id}
-                                      onClick={() => act(o.id, 'execute')}>Execute</Button>
+                                      color={o.mode === 'real' ? 'warning' : 'primary'}
+                                      onClick={() => o.mode === 'real' ? setExecuteReal(o)
+                                                                       : act(o.id, 'execute')}>
+                                {o.mode === 'real' ? 'Execute (buy)…' : 'Execute'}
+                              </Button>
                               <Button size="small" color="error" disabled={actBusy === o.id}
                                       onClick={() => act(o.id, 'cancel')}>Cancel</Button>
                             </>
@@ -151,6 +166,17 @@ export function OrdersView() {
           </Box>
         )}
 
+      <ConfirmDialog
+        open={!!executeReal}
+        title="Buy at the provider"
+        serverName={executeReal?.plan_name ?? ''}
+        body={`Execute order #${executeReal?.id}: ${executeReal?.adapter} creates ${executeReal?.plan_name} in ${executeReal?.location} and bills it to the account. This can't be undone from the panel.`}
+        confirmLabel="Buy"
+        requireTyped
+        confirming={actBusy === executeReal?.id}
+        onConfirm={() => { const o = executeReal!; setExecuteReal(null); void act(o.id, 'execute'); }}
+        onClose={() => setExecuteReal(null)}
+      />
       {detailId != null && <OrderDetailDialog orderId={detailId} onClose={() => setDetailId(null)} />}
       <Toast msg={toast} onClose={() => setToast(null)} />
     </Stack>
@@ -184,6 +210,13 @@ function OrderDetailDialog({ orderId, onClose }: { orderId: number; onClose: () 
             <Typography variant="body2" className="num">
               result: {d.resulting_provider_id}
             </Typography>
+          )}
+          {d.status === 'awaiting_payment' && (
+            <Alert severity="info">
+              The provider created order {d.provider_ref} unpaid - nothing is
+              delivered or charged until it's paid.{' '}
+              {d.pay_url && <Link href={d.pay_url} target="_blank" rel="noreferrer">Pay it at the provider</Link>}
+            </Alert>
           )}
           <Box>
             <Typography variant="overline" sx={{ color: 'text.secondary' }}>Timeline</Typography>

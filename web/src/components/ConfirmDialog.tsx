@@ -39,7 +39,10 @@ export function ConfirmDialog({
   const ready = !requireTyped || typed.trim() === serverName;
   const mismatch = requireTyped && typed.trim().length > 0 && !ready;
   const busyLabel = { 'Shut down': 'Shutting down…', Reboot: 'Rebooting…', Rebuild: 'Rebuilding…',
-                      Delete: 'Deleting…', Remove: 'Removing…' }[confirmLabel ?? 'Confirm']
+                      Delete: 'Deleting…', Remove: 'Removing…',
+                      'Enable purchases': 'Enabling…', 'Change IP': 'Changing…',
+                      Release: 'Releasing…', 'Add IP': 'Adding…',
+                      'Set password': 'Setting…', Buy: 'Buying…' }[confirmLabel ?? 'Confirm']
                     ?? `${confirmLabel ?? 'Confirm'}ing…`;
   return (
     <Dialog aria-labelledby="omni-dlg-39" open={open} onClose={confirming ? undefined : onClose} maxWidth="xs" fullWidth>

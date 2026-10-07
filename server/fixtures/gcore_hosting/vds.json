@@ -1,0 +1,11 @@
+{"doc": {"$lang": "en", "$func": "vds", "elem": [
+  {"id": {"$": "5101"}, "domain": {"$": "srv-ams-01"}, "ip": {"$": "203.0.113.10"},
+   "pricelist": {"$": "KVM-SSD-2"}, "cost": {"$": "9.00 EUR"}, "expiredate": {"$": "2026-11-01"},
+   "autoprolong": {"$": "1 month"}, "item_status": {"$": "2"}, "datacentername": {"$": "dc-ams-1"},
+   "createdate": {"$": "2026-09-01"}},
+  {"id": {"$": "5102"}, "domain": {"$": "srv-ams-02"}, "ip": {"$": "203.0.113.20"},
+   "pricelist": {"$": "KVM-SSD-1"}, "cost": {"$": "5.00 EUR"}, "expiredate": {"$": "2026-10-15"},
+   "autoprolong": {"$": "off"}, "item_status": {"$": "3"}},
+  {"id": {"$": "5099"}, "domain": {"$": "srv-old-01"}, "ip": {"$": "203.0.113.99"},
+   "pricelist": {"$": "KVM-SSD-1"}, "item_status": {"$": "4"}}
+]}}

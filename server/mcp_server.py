@@ -48,6 +48,9 @@ Rules the panel's data follows - keep them when you report on it:
 - Destructive tools (rebuild_server, delete_server, delete_account,
   apply_update) are irreversible: get the human's explicit confirmation,
   naming the exact target, before calling one.
+- Tools that spend money (change_ip, add_ip, execute_order on a real
+  order) need the human's explicit go-ahead with the cost from describe_ip
+  or the order's estimate. A server's primary IP is never changeable.
 """
 
 mcp = MCPServer("OmniCloud", instructions=INSTRUCTIONS, version=version.VERSION)
@@ -79,9 +82,17 @@ def _http_errors():
         raise ToolError(f"{e.status_code}: {e.detail}") from None
 
 
+def _full_scope_user(header: str | None) -> auth.User | None:
+    """Bearer -> user, full-scope tokens only. MCP authenticates outside
+    require_user, so it must apply the scope rule itself: an ip_change
+    token (held by a remote rotation script) reaches nothing here."""
+    user = auth.user_for_bearer(header)
+    return user if user is not None and user.scope == "full" else None
+
+
 async def _user(ctx: Context) -> auth.User:
     header = (ctx.headers or {}).get("authorization")
-    user = await anyio.to_thread.run_sync(auth.user_for_bearer, header)
+    user = await anyio.to_thread.run_sync(_full_scope_user, header)
     if user is None:
         raise ToolError("401: Not signed in")
     return user
@@ -233,6 +244,21 @@ async def get_billing_summary(ctx: Context) -> dict:
     return {"billing": await _call(ctx, api.billing_summary)}
 
 
+@mcp.tool(annotations=READ)
+async def get_account_billing(ctx: Context) -> dict:
+    """Per-account billing as each provider reports it: model, balance,
+    invoices (due date, open amount, provider's status), unpaid orders with
+    pay links, renewals. Fields in a snapshot's not_exposed are unknown,
+    never zero."""
+    return {"accounts": await _call(ctx, api.billing_accounts)}
+
+
+@mcp.tool(annotations=IDEMPOTENT)
+async def refresh_account_billing(ctx: Context, account_id: AccountId) -> dict:
+    """Admin. Re-read one account's billing from the provider now."""
+    return await _call(ctx, api.billing_refresh, account_id=account_id)
+
+
 @mcp.tool(annotations=IDEMPOTENT)
 async def sync_account(ctx: Context, account_id: AccountId) -> dict:
     """Ask the account's sync loop to re-fetch from the provider now. Returns
@@ -367,23 +393,30 @@ async def create_account(
         ctx: Context,
         adapter: Annotated[str, Field(description="Fleet adapter key (list_adapters)")],
         name: Annotated[str, Field(min_length=1)],
-        token: Annotated[str, Field(min_length=1, description=(
-            "The provider API credential. Stored encrypted; it is never "
-            "returned by any tool afterwards"))],
+        token: Annotated[str | None, Field(min_length=1, description=(
+            "The provider API token, for adapters whose credential_fields is a "
+            "single 'token'. Stored encrypted; never returned afterwards"))] = None,
+        fields: Annotated[dict[str, str] | None, Field(description=(
+            "For adapters with several credential_fields (list_adapters), e.g. "
+            "{username, password}. Stored encrypted"))] = None,
         scope: str | None = None,
 ) -> dict:
     """Admin. Connect a provider account and start syncing its fleet."""
     return await _call(ctx, api.create_account, body=api.AccountBody(
-        adapter=adapter, name=name, token=token, scope=scope))
+        adapter=adapter, name=name, token=token, fields=fields, scope=scope))
 
 
 @mcp.tool(annotations=IDEMPOTENT)
 async def update_account(ctx: Context, account_id: AccountId,
                          name: Annotated[str | None, Field(min_length=1)] = None,
-                         enabled: bool | None = None) -> dict:
-    """Admin. Rename an account, or enable/disable its sync."""
+                         enabled: bool | None = None,
+                         purchases_enabled: bool | None = None) -> dict:
+    """Admin. Rename an account, enable/disable its sync, or switch real
+    purchases (IP changes, real orders) on/off - turning purchases on lets
+    the panel spend money there: only with the human's explicit go-ahead."""
     return await _call(ctx, api.patch_account, account_id=account_id,
-                       body=api.AccountPatch(name=name, enabled=enabled))
+                       body=api.AccountPatch(name=name, enabled=enabled,
+                                             purchases_enabled=purchases_enabled))
 
 
 @mcp.tool(annotations=DESTRUCTIVE)
@@ -445,10 +478,13 @@ async def create_order(
         plan_name: Annotated[str, Field(description="Plan name from get_catalog")],
         location: str,
         options: Annotated[dict[str, Any], Field(description=(
-            "Optional: hostname (str), extra_ips (int), image (list_os_images)"))] = {},
+            "Optional: hostname (str), extra_ips (int), image (list_os_images), "
+            "account_id (int) - an account with purchases enabled makes the "
+            "order real"))] = {},
 ) -> dict:
     """Admin. Draft an order for a catalog plan. Nothing is ordered until
-    confirm_order then execute_order."""
+    confirm_order then execute_order; the draft's mode says whether
+    executing it buys at the provider ("real") or rehearses ("prototype")."""
     return await _call(ctx, api.create_order, body=api.OrderBody(
         adapter=adapter, plan_name=plan_name, location=location, options=options))
 
@@ -468,8 +504,45 @@ async def cancel_order(ctx: Context, order_id: int) -> dict:
 @mcp.tool(annotations=WRITE)
 async def execute_order(ctx: Context, order_id: int) -> dict:
     """Admin. Submit a confirmed order for provisioning (-> executing; poll
-    get_order). Confirm the plan and price with the human first."""
+    get_order). A mode=real order SPENDS MONEY at the provider; it may end
+    awaiting_payment with a pay_url. Confirm plan and price with the human
+    first."""
     return await _call(ctx, api.execute_order, order_id=order_id)
+
+
+# -- IPs ----------------------------------------------------------------------------
+
+@mcp.tool(annotations=READ)
+async def describe_ip(ctx: Context, address: str) -> dict:
+    """Which server/account owns an IP, whether it is the primary (never
+    changeable) or a swappable extra, what one change costs in the
+    provider's own unit, and the account's 24 h acquisition count vs cap."""
+    return await _call(ctx, api.ip_describe, address=address)
+
+
+@mcp.tool(annotations=WRITE)
+async def change_ip(ctx: Context, address: str, release_first: bool = False) -> dict:
+    """Admin. SPENDS MONEY: swap a swappable IP for a fresh one on the same
+    server (acquire, then release the old one; release_first for servers at
+    their IP cap). Returns the new address, or status awaiting_payment with
+    a pay_url (OVH). Get the human's go-ahead with the cost first."""
+    return await _call(ctx, api.ip_change, address=address,
+                       body=api.IpChangeBody(release_first=release_first))
+
+
+@mcp.tool(annotations=WRITE)
+async def add_ip(ctx: Context, account_id: AccountId, provider_id: ProviderId) -> dict:
+    """Admin. SPENDS MONEY: buy one more public IPv4 for a server."""
+    return await _call(ctx, api.ip_add, account_id=account_id, provider_id=provider_id)
+
+
+@mcp.tool(annotations=DESTRUCTIVE)
+async def release_ip(ctx: Context, account_id: AccountId, provider_id: ProviderId,
+                     address: str) -> dict:
+    """Admin. IRREVERSIBLE: give a swappable IP back to the provider. The
+    primary IP is refused."""
+    return await _call(ctx, api.ip_release, account_id=account_id,
+                       provider_id=provider_id, address=address)
 
 
 # -- users / tokens / settings / audit ---------------------------------------------
@@ -509,10 +582,13 @@ async def list_api_tokens(ctx: Context) -> dict:
 
 @mcp.tool(annotations=WRITE)
 async def create_api_token(ctx: Context,
-                           name: Annotated[str, Field(min_length=1, max_length=100)]) -> dict:
-    """Mint a personal API token for yourself, with your role. The plaintext
-    is in this result exactly once - it cannot be retrieved later."""
-    return await _call(ctx, api.create_token, body=api.TokenBody(name=name))
+                           name: Annotated[str, Field(min_length=1, max_length=100)],
+                           scope: Annotated[str, Field(description=(
+                               "full (your role) or ip_change (only the IP-change API "
+                               "- for a remote rotation script)"))] = "full") -> dict:
+    """Mint a personal API token for yourself. The plaintext is in this
+    result exactly once - it cannot be retrieved later."""
+    return await _call(ctx, api.create_token, body=api.TokenBody(name=name, scope=scope))
 
 
 @mcp.tool(annotations=DESTRUCTIVE)
@@ -524,13 +600,15 @@ async def revoke_api_token(ctx: Context, token_id: int) -> dict:
 
 @mcp.tool(annotations=READ)
 async def get_settings(ctx: Context) -> dict:
-    """Admin. Editable settings: sync_* (intervals) and update_*."""
+    """Admin. Editable settings: sync_* (intervals), update_*,
+    ip_change_daily_cap[:<account_id>] and billing_* (billing_interval_min,
+    billing_low_balance:<account_id>)."""
     return await _call(ctx, api.get_settings)
 
 
 @mcp.tool(annotations=IDEMPOTENT)
 async def update_settings(ctx: Context, settings: Annotated[dict[str, str], Field(description=(
-        "Keys must start with sync_ or update_, e.g. "
+        "Keys must start with sync_, update_, ip_ or billing_, e.g. "
         "{\"sync_default_interval\": \"10\"} (minutes)"))]) -> dict:
     """Admin. Write settings; one invalid key rejects the whole write."""
     return await _call(ctx, api.put_settings, body=settings)
@@ -586,7 +664,7 @@ class _BearerGate:
     async def __call__(self, scope, receive, send):
         if scope["type"] == "http":
             header = Headers(scope=scope).get("authorization")
-            if await anyio.to_thread.run_sync(auth.user_for_bearer, header) is None:
+            if await anyio.to_thread.run_sync(_full_scope_user, header) is None:
                 await JSONResponse({"detail": "Not signed in"}, 401,
                                    headers={"WWW-Authenticate": "Bearer"})(
                     scope, receive, send)

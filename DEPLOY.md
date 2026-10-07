@@ -20,7 +20,7 @@ closes forever after).
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `OMNICLOUD_MASTER_KEY` | *(empty)* | Fernet key encrypting provider API tokens. Without it the app runs but credential operations return 503. **Back this up separately from the DB** — losing it loses every stored credential. |
+| `OMNICLOUD_MASTER_KEY` | *(empty)* | Fernet key encrypting provider credentials (API tokens and panel logins). Without it the app runs but credential operations return 503. **Back this up separately from the DB** — losing it loses every stored credential. |
 | `OMNICLOUD_DB` | `./omnicloud.db` | SQLite path (WAL mode). Put it on a real disk, not a container overlay you never back up. |
 | `OMNICLOUD_SESSION_TTL_DAYS` | `30` | Session lifetime. |
 | `OMNICLOUD_SYNC_INTERVAL_MIN` | `5` | Default fleet sync interval (per-account override in Settings). |
@@ -30,7 +30,7 @@ closes forever after).
 
 ## Backups
 
-`omnicloud.db` holds Fernet-encrypted provider tokens — it *is* the install.
+`omnicloud.db` holds Fernet-encrypted provider credentials — it *is* the install.
 SQLite's online backup is safe while the app runs:
 
 ```bash
@@ -63,10 +63,28 @@ location / { proxy_pass http://127.0.0.1:8000; }
 ```
 
 `proxy_read_timeout 960s` matters: a rebuild/delete waits for the provider's
-own confirmation (up to 900s). A proxy that cuts at 60s returns a 502 to the
-operator while the action still completes server-side. `/mcp` answers plain
-JSON (no SSE stream to unbuffer); its action tools return `in_progress`
-after `wait_seconds` (default 50) and the agent polls `get_action`.
+own confirmation (up to 900s), and an IP change waits for the provider to
+assign the new address (minutes on BILLmanager panels). A proxy that cuts at
+60s returns a 502 to the operator while the action still completes
+server-side - an IP-change caller recovers the outcome from
+`GET /api/actions/{id}`. `/mcp` answers plain JSON (no SSE stream to
+unbuffer); its action tools return `in_progress` after `wait_seconds`
+(default 50) and the agent polls `get_action`.
+
+## Provider-side setup
+
+- **Netlen** API keys work only from allow-listed IPs: add this panel's
+  outgoing IP to the key's allowlist, or every sync fails with
+  `AUTH_IP_NOT_ALLOWED`.
+- **LightNode** issues API tokens after a manual review in its console.
+- **Gcore Hosting** and **Tube-hosting** have no API tokens: the panel signs
+  in with the account login. Consider a dedicated login where the provider
+  offers sub-users.
+- **Purchases** (IP changes/adds, real server orders) stay off until an
+  admin enables them per account under Credentials. Set the per-account
+  daily IP cap (Settings) before handing an `ip_change` token to a script.
+- **Billing** refreshes hourly per account (`billing_interval_min` setting,
+  minimum 5).
 
 ## Health check
 
@@ -128,11 +146,16 @@ docker stop omnicloud && docker rm omnicloud
 git pull
 uv sync
 cd web && npm install && npm run build && cd ..
-# restart the process; schema changes are additive and applied on boot
+# restart the process; schema migrations run on boot
 ```
 
 The app refuses to start against a **newer** schema than the build knows
 (downgrades would corrupt data). Restore order: code first, then DB.
+
+Schema v4 (IP management, billing, real orders) migrates a v3 database in
+place on first boot: additive columns plus a rebuild of the `orders` table
+(order history and events are kept). Take a backup first - once migrated,
+an older build refuses the database.
 
 ## Docker
 

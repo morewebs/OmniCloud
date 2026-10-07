@@ -8,6 +8,7 @@ import TextField from '@mui/material/TextField';
 import Typography from '@mui/material/Typography';
 import { api, del, post, put } from '../api';
 import Chip from '@mui/material/Chip';
+import MenuItem from '@mui/material/MenuItem';
 import Tooltip from '@mui/material/Tooltip';
 import type { AccountRow } from '../types';
 import { PageHeader } from '../components/PageHeader';
@@ -48,6 +49,10 @@ export function SettingsView() {
           const def = settings.data!['sync_default_interval'];
           if (def !== undefined) withDefaults[key] = def;
         }
+        // the IP acquisition cap's effective value (server default: 10)
+        const cap = `ip_change_daily_cap:${a.id}`;
+        if (withDefaults[cap] === undefined)
+          withDefaults[cap] = settings.data!['ip_change_daily_cap'] ?? '10';
       }
       lastSynced.current = withDefaults;
       return withDefaults;
@@ -80,7 +85,9 @@ export function SettingsView() {
   );
 
   const invalid = Object.entries(form).some(([k, v]) =>
-    k.startsWith('sync_interval:') && (!Number.isInteger(Number(v)) || Number(v) < 1));
+    (k.startsWith('sync_interval:') && (!Number.isInteger(Number(v)) || Number(v) < 1))
+    || (k.startsWith('ip_change_daily_cap') && (v === '' || !Number.isInteger(Number(v)) || Number(v) < 0))
+    || (k.startsWith('billing_low_balance:') && v !== '' && (Number.isNaN(Number(v)) || Number(v) < 0)));
 
   const save = async () => {
     setBusy(true); setError(null);
@@ -129,6 +136,43 @@ export function SettingsView() {
           );
         })}
         {accounts.data!.length > 0 && (
+          <>
+            <Typography variant="subtitle1">Low-balance alert</Typography>
+            <Typography variant="body2" sx={{ color: 'text.secondary' }}>
+              Overview warns when a prepaid account's balance drops below this
+              amount (in the balance's own currency). Empty = no alert.
+            </Typography>
+            {accounts.data!.map(a => {
+              const key = `billing_low_balance:${a.id}`;
+              const val = form[key] ?? '';
+              const bad = val !== '' && (Number.isNaN(Number(val)) || Number(val) < 0);
+              return (
+                <TextField key={key} className="num" label={`${a.name} (${a.adapter})`}
+                           value={val} type="number" size="small" error={bad}
+                           helperText={bad ? 'an amount ≥ 0, or empty' : undefined}
+                           onChange={e => setForm(f => ({ ...f, [key]: e.target.value }))} />
+              );
+            })}
+            <Typography variant="subtitle1">IP acquisitions per 24 h</Typography>
+            <Typography variant="body2" sx={{ color: 'text.secondary' }}>
+              Cap on IP adds and changes per account (every attempt counts) -
+              stops a looping IP-change script from running up a bill.
+              0 blocks them entirely.
+            </Typography>
+            {accounts.data!.map(a => {
+              const key = `ip_change_daily_cap:${a.id}`;
+              const val = form[key] ?? '';
+              const bad = val === '' || !Number.isInteger(Number(val)) || Number(val) < 0;
+              return (
+                <TextField key={key} className="num" label={`${a.name} (${a.adapter})`}
+                           value={val} type="number" size="small" error={bad}
+                           helperText={bad ? 'a whole number ≥ 0' : undefined}
+                           onChange={e => setForm(f => ({ ...f, [key]: e.target.value }))} />
+              );
+            })}
+          </>
+        )}
+        {accounts.data!.length > 0 && (
           <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
             <Button variant="contained" onClick={save} disabled={busy || invalid}>
               {busy ? 'Saving…' : 'Save'}
@@ -151,6 +195,7 @@ export function SettingsView() {
 interface TokenRow {
   id: number;
   name: string;
+  scope: 'full' | 'ip_change';
   created_at: string;
   last_used_at: string | null;
 }
@@ -162,6 +207,7 @@ function ApiTokensPanel({ onToast }: { onToast: (m: string, s?: 'success' | 'err
     queryFn: () => api<TokenRow[]>('/api/auth/tokens') });
   const qc = useQueryClient();
   const [name, setName] = useState('');
+  const [scope, setScope] = useState<'full' | 'ip_change'>('full');
   const [created, setCreated] = useState<string | null>(null); // one-time reveal
   const [revoking, setRevoking] = useState<TokenRow | null>(null);
   const [busy, setBusy] = useState(false);
@@ -169,7 +215,7 @@ function ApiTokensPanel({ onToast }: { onToast: (m: string, s?: 'success' | 'err
   const create = async () => {
     setBusy(true);
     try {
-      const r = await post<{ token: string }>('/api/auth/tokens', { name: name.trim() });
+      const r = await post<{ token: string }>('/api/auth/tokens', { name: name.trim(), scope });
       setCreated(r.token);
       setName('');
       qc.invalidateQueries({ queryKey: ['tokens'] });
@@ -212,7 +258,11 @@ function ApiTokensPanel({ onToast }: { onToast: (m: string, s?: 'success' | 'err
         <Stack key={t.id} direction="row" spacing={1}
                sx={{ alignItems: 'center', justifyContent: 'space-between' }}>
           <Stack sx={{ minWidth: 0 }}>
-            <Typography variant="body2" sx={{ fontWeight: 500 }}>{t.name}</Typography>
+            <Typography variant="body2" sx={{ fontWeight: 500 }}>
+              {t.name}{t.scope === 'ip_change' && (
+                <Chip size="small" variant="outlined" label="IP change only" sx={{ ml: 1, height: 18 }} />
+              )}
+            </Typography>
             <Typography variant="caption" sx={{ color: 'text.secondary' }}>
               created {new Date(t.created_at).toLocaleDateString()}
               {t.last_used_at && ` · last used ${new Date(t.last_used_at).toLocaleString()}`}
@@ -236,7 +286,13 @@ function ApiTokensPanel({ onToast }: { onToast: (m: string, s?: 'success' | 'err
       )}
       <Stack direction="row" spacing={1}>
         <TextField size="small" label="Token name" value={name}
-                   onChange={e => setName(e.target.value)} sx={{ width: 240 }} />
+                   onChange={e => setName(e.target.value)} sx={{ width: 200 }} />
+        <TextField select size="small" label="Scope" value={scope} sx={{ width: 170 }}
+                   onChange={e => setScope(e.target.value as 'full' | 'ip_change')}
+                   helperText={scope === 'ip_change' ? 'Only the IP-change API (docs/ip-change.md)' : undefined}>
+          <MenuItem value="full">Full (your role)</MenuItem>
+          <MenuItem value="ip_change">IP change only</MenuItem>
+        </TextField>
         <Button variant="contained" disabled={busy || !name.trim()} onClick={create}>
           {busy ? 'Creating…' : 'Create token'}
         </Button>

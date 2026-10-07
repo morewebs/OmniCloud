@@ -29,6 +29,12 @@ Issues and PRs welcome. The short version:
      `tests/test_mcp.py`. Browser-only routes (login, setup, the SSE
      stream) are the exception; `docs/mcp.md` says which.
 
+5. **Money is sent once.** Any provider call that buys something (an IP,
+   a server) uses `request(..., retry=False)` and confirms the result on
+   the provider's own view; an order left unpaid raises `PaymentRequired`,
+   never success. Capabilities are an explicit set per adapter (never
+   `frozenset(Capability)`), so a new capability is opt-in.
+
 ## Setup & checks
 
 ```bash

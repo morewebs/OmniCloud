@@ -43,6 +43,10 @@ def test_env(monkeypatch):
     async def _no_sync_loop(account_id):
         return None
     monkeypatch.setattr(sync, "_sync_loop", _no_sync_loop)
+    # hetzner's module-level price cache would leak one test's catalog into
+    # the next (order-dependent results) - every test starts cold
+    from server.adapters import hetzner
+    monkeypatch.setattr(hetzner, "_catalog", None)
     yield
     sync._loop = None
 
@@ -398,13 +402,120 @@ def mock_gcore_transport():
     return httpx.MockTransport(handler), calls, headers
 
 
+def mock_gcore_hosting_transport(*, expire_session_once: bool = False,
+                                 subaccount_denied: bool = False,
+                                 ip_appears_after: int = 0,
+                                 payment_required: bool = False):
+    """Stateful BILLmanager double: every request is a form/query with func=.
+    IP orders append a fresh documentation-range address (after
+    `ip_appears_after` further service.ip reads, like a provisioning delay);
+    deletes remove it. Returns (transport, calls, state) - calls are
+    (http_method, func, params) with the password redacted."""
+    import copy
+    from urllib.parse import parse_qs
+
+    import httpx
+
+    state = {
+        "ips": {sid: copy.deepcopy(fixture(f"gcore_hosting/service_ip_{sid}.json"))
+                for sid in ("5101", "5102")},
+        "vds": copy.deepcopy(fixture("gcore_hosting/vds.json")),
+        "next_ip": 30, "pending": [], "expired": expire_session_once,
+        "passwords": {},
+    }
+    calls: list[tuple[str, str, dict]] = []
+
+    def _elems(doc):
+        e = doc["doc"].get("elem", [])
+        return e if isinstance(e, list) else [e]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "POST":
+            p = {k: v[0] for k, v in parse_qs(request.content.decode()).items()}
+        else:
+            p = dict(request.url.params)
+        func = p.get("func", "")
+        logged = {k: ("<redacted>" if k in ("password", "passwd", "confirm") else v)
+                  for k, v in p.items()}
+        calls.append((request.method, func, logged))
+        assert "password" not in request.url.params, "password must never be in a URL"
+        if func == "auth":
+            if p.get("password") != "panel-pw-0000":
+                return httpx.Response(200, json={"doc": {"error": {
+                    "$type": "auth", "msg": {"$": "Invalid username or password"}}}})
+            return httpx.Response(200, json={"doc": {"auth": {"$": "sess-1"}}})
+        if p.get("auth") != "sess-1":
+            return httpx.Response(200, json=fixture("gcore_hosting/error_auth.json"))
+        if state["expired"]:
+            state["expired"] = False
+            return httpx.Response(200, json=fixture("gcore_hosting/error_auth.json"))
+        if func == "vds":
+            return httpx.Response(200, json=state["vds"])
+        if func == "service.ip":
+            sid = p["elid"]
+            doc = state["ips"][sid]
+            for item in list(state["pending"]):
+                if item["sid"] == sid:
+                    if item["wait"] <= 0:
+                        rows = _elems(doc)
+                        rows.append(item["row"])
+                        doc["doc"]["elem"] = rows
+                        state["pending"].remove(item)
+                    else:
+                        item["wait"] -= 1
+            return httpx.Response(200, json=doc)
+        if func == "service.ip.edit":
+            if p.get("sok") != "ok":
+                return httpx.Response(200, json=fixture("gcore_hosting/ip_form.json"))
+            if payment_required:
+                return httpx.Response(200, json={"doc": {"billorder": {"$": "BO-77"},
+                                                         "ok": {"$": "https://pay.example.test/77"}}})
+            n = state["next_ip"]
+            state["next_ip"] += 1
+            row = {"id": {"$": f"95{n}"}, "name": {"$": f"203.0.113.{n}"},
+                   "type": {"$": "Public IPv4"}}
+            state["pending"].append({"sid": p["plid"], "row": row, "wait": ip_appears_after})
+            return httpx.Response(200, json={"doc": {"ok": {"$": ""}}})
+        if func == "service.ip.delete":
+            doc = state["ips"][p["plid"]]
+            rows = [r for r in _elems(doc) if r["id"]["$"] != p["elid"]]
+            if len(rows) == len(_elems(doc)):
+                return httpx.Response(200, json={"doc": {"error": {
+                    "$type": "missed", "msg": {"$": "The item does not exist"}}}})
+            doc["doc"]["elem"] = rows
+            return httpx.Response(200, json={"doc": {"ok": {"$": ""}}})
+        if func == "service.changepassword":
+            state["passwords"][p["elid"]] = p["passwd"]
+            return httpx.Response(200, json={"doc": {"ok": {"$": ""}}})
+        if func == "vds.delete":
+            state["vds"]["doc"]["elem"] = [r for r in _elems(state["vds"])
+                                           if r["id"]["$"] != p["elid"]]
+            return httpx.Response(200, json={"doc": {"ok": {"$": ""}}})
+        if func == "payment":
+            return httpx.Response(200, json=fixture("gcore_hosting/payment.json"))
+        if func == "subaccount":
+            if subaccount_denied:
+                return httpx.Response(200, json=fixture("gcore_hosting/error_access.json"))
+            return httpx.Response(200, json=fixture("gcore_hosting/subaccount.json"))
+        return httpx.Response(200, json={"doc": {"error": {
+            "$type": "missed", "msg": {"$": f"unknown func {func}"}}}})
+
+    return httpx.MockTransport(handler), calls, state
+
+
+GCORE_HOSTING_CRED = json.dumps({"url": "https://panel.example.test/billmgr",
+                                 "username": "ops@example.test",
+                                 "password": "panel-pw-0000"})
+
+
 class FakeAdapter:
     """Test double implementing the read + action surface for the API smoke
     test. Not a shipped abstraction - lives only in conftest."""
     key = "fake"
     display_name = "Fake"
-    from server.adapters.base import Capability
+    from server.adapters.base import TOKEN_FIELD, Capability
     capabilities = frozenset({Capability.REBOOT, Capability.RENAME, Capability.DELETE})
+    credential_fields = (TOKEN_FIELD,)
 
     def __init__(self, account_id, account_name, token, http=None):
         self.account_id = account_id

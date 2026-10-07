@@ -31,14 +31,35 @@ class ProviderHttpClient:
         )
         self._auth = auth
 
-    async def request(self, method: str, path: str, **kw) -> httpx.Response:
+    async def request(self, method: str, path: str, *, retry: bool = True,
+                      **kw) -> httpx.Response:
         """Send with auth + retry/backoff. Raises AdapterError on final failure
-        (message contains status + path only, never headers or token)."""
+        (message contains status + path only, never headers or token).
+
+        retry=False is for requests that spend money (ordering an IP or a
+        server): a 5xx or a dropped connection may still have placed the
+        order, so it is sent exactly once and the outcome reported as-is -
+        a retry could buy twice."""
         tries_5xx = 0
+        resp = None
         for attempt in range(MAX_TRIES):
             req = self._client.build_request(method, path, **kw)
             self._auth(req)
-            resp = await self._client.send(req)
+            try:
+                resp = await self._client.send(req)
+            except httpx.TransportError as e:
+                if not retry:
+                    raise AdapterError(
+                        f"{method} {path}: connection failed ({type(e).__name__}) - "
+                        "the provider may still have accepted it; check its panel "
+                        "before retrying")
+                if tries_5xx < RETRIES_5XX:
+                    tries_5xx += 1
+                    await asyncio.sleep(BACKOFF_LADDER[min(attempt, len(BACKOFF_LADDER) - 1)])
+                    continue
+                raise AdapterError(f"{method} {path}: connection failed ({type(e).__name__})")
+            if not retry:
+                return resp
             if resp.status_code == 429 and attempt < MAX_TRIES - 1:
                 await asyncio.sleep(self._retry_after(resp, attempt))
                 continue
@@ -47,6 +68,8 @@ class ProviderHttpClient:
                 await asyncio.sleep(self._retry_after(resp, attempt))
                 continue
             return resp
+        if resp is not None and resp.status_code != 429:
+            return resp  # 5xx after the last retry: the caller raises with its body
         raise AdapterError(f"{method} {path}: rate limit persisted after retries")
 
     async def get_json(self, path: str, params: dict | None = None) -> Any:
@@ -56,6 +79,11 @@ class ProviderHttpClient:
 
     async def post_json(self, path: str, body: dict | None = None) -> httpx.Response:
         r = await self.request("POST", path, json=body)
+        self._raise_for_status(r)
+        return r
+
+    async def patch_json(self, path: str, body: dict | None = None) -> httpx.Response:
+        r = await self.request("PATCH", path, json=body)
         self._raise_for_status(r)
         return r
 

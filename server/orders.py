@@ -1,11 +1,14 @@
 """Order lifecycle: draft -> confirmed -> executing -> provisioned|failed
 (+ cancelled from draft/confirmed, never from executing - a submit is
-irreversible in the real world).
+irreversible in the real world; + awaiting_payment when the provider holds
+the server behind an unpaid order).
 
-`mode` is the go-live flip: prototype execution simulates provisioning
-(placeholder id, explicit audit wording, NO row in the servers cache - the
-fleet is provider-reported truth and never holds invented servers); real
-execution will call the adapter's optional provision() seam.
+`mode` is fixed when the order is drafted: 'real' when it names an account
+whose purchases are enabled, else 'prototype'. Prototype execution simulates
+provisioning (placeholder id, explicit audit wording, NO row in the servers
+cache - the fleet is provider-reported truth and never holds invented
+servers); real execution calls the account adapter's provision() and buys
+the requested extra IPs on the new server.
 """
 from __future__ import annotations
 
@@ -69,6 +72,25 @@ def create_order(user_id: int, adapter: str, plan_name: str, location: str,
     ip_offer = plan.get("extra_ip") or {}
     if extra_ips > 0 and not ip_offer:
         raise OrderError("this plan does not offer additional IPs")
+    if ip_offer.get("limit") is not None and extra_ips > int(ip_offer["limit"]):
+        raise OrderError(f"this plan allows at most {ip_offer['limit']} additional IPs")
+
+    mode, account_id = "prototype", options.get("account_id")
+    if account_id is not None:
+        from . import accounts
+        account = accounts.get_account(int(account_id))
+        if not account:
+            raise OrderError(f"no account {account_id}")
+        if account["adapter"] != adapter:
+            raise OrderError(f"account {account['name']} is a {account['adapter']} account, "
+                             f"not {adapter}")
+        if account["purchases_enabled"]:
+            cls = accounts.ADAPTERS.get(adapter)
+            if not hasattr(cls, "provision"):
+                raise OrderError(f"{adapter} server ordering isn't wired in the panel yet - "
+                                 "order in the provider's own panel")
+            mode = "real"
+        account_id = account["id"]
 
     # Estimate: plan monthly + extra IP prices where published. Unpublished
     # IP price = partial estimate, labeled as such (never invented).
@@ -95,8 +117,8 @@ def create_order(user_id: int, adapter: str, plan_name: str, location: str,
             """INSERT INTO orders(mode, status, adapter, account_id, plan_name, location,
                                   options, plan_snapshot, estimated_monthly, requested_by,
                                   created_at, updated_at)
-               VALUES('prototype', 'draft', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (adapter, options.get("account_id"), plan_name, location,
+               VALUES(?, 'draft', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (mode, adapter, account_id, plan_name, location,
              json.dumps(options), json.dumps(plan), json.dumps(estimated),
              user_id, ts, ts))
         order_id = cur.lastrowid
@@ -182,8 +204,8 @@ async def _execute_task(order_id: int, user_id: int, o: dict) -> None:
                          after={"provider_id": pid, "mode": "prototype",
                                 "detail": "prototype - no real provisioning"})
         else:
-            # The real path (later): adapter.provision(order) -> provider_id.
-            raise OrderError("real-order execution is not implemented yet")
+            if await _execute_real(order_id, user_id, o) == "awaiting_payment":
+                return
         _publish("order", {"order_id": order_id, "status": "provisioned"})
     except Exception as e:  # noqa: BLE001 - failures are states, not crashes
         msg = f"{type(e).__name__}: {e}"[:500]
@@ -191,11 +213,71 @@ async def _execute_task(order_id: int, user_id: int, o: dict) -> None:
             cur = conn.execute(
                 "UPDATE orders SET status='failed', updated_at=? WHERE id=? AND status='executing'",
                 (db.now(), order_id))
-            if cur.rowcount:
+            failed = cur.rowcount > 0
+            if failed:
                 conn.execute("INSERT INTO order_events(order_id, status, detail, created_at) "
                              "VALUES(?, 'failed', ?, ?)", (order_id, msg, db.now()))
-                audit.record(user_id, "order.failed", f"order/{order_id}", after={"error": msg})
-                _publish("order", {"order_id": order_id, "status": "failed"})
+        # outside the transaction: audit opens its own connection, and doing
+        # that while this one holds the write lock deadlocked into a rollback
+        # (the order then sat in 'executing' forever)
+        if failed:
+            audit.record(user_id, "order.failed", f"order/{order_id}", after={"error": msg})
+            _publish("order", {"order_id": order_id, "status": "failed"})
+
+
+async def _execute_real(order_id: int, user_id: int, o: dict) -> str:
+    """adapter.provision -> provisioned (provider_id recorded, extra IPs
+    bought on the new server) or awaiting_payment (pay URL recorded)."""
+    from . import accounts, sync
+    from .adapters.base import AdapterError, PaymentRequired
+    account = accounts.get_account(o["account_id"]) if o["account_id"] else None
+    if not account:
+        raise OrderError("the order's account no longer exists")
+    if not account["purchases_enabled"]:
+        raise OrderError("purchases were disabled for this account after the order was "
+                         "drafted - nothing was sent to the provider")
+    options = json.loads(o["options"])
+    adapter = accounts.build_adapter(account)
+    try:
+        try:
+            pid = await adapter.provision(o["plan_name"], o["location"], options)
+        except PaymentRequired as e:
+            with db.connect() as conn:
+                conn.execute("UPDATE orders SET provider_ref=?, pay_url=? WHERE id=?",
+                             (e.order_ref, e.pay_url, order_id))
+            _transition(order_id, "awaiting_payment",
+                        f"provider order {e.order_ref} created unpaid - pay it to start "
+                        "delivery", ("executing",))
+            audit.record(user_id, "order.awaiting_payment", f"order/{order_id}",
+                         after={"provider_ref": e.order_ref, "pay_url": e.pay_url})
+            _publish("order", {"order_id": order_id, "status": "awaiting_payment"})
+            return "awaiting_payment"
+        notes = []
+        for n in range(int(options.get("extra_ips") or 0)):
+            try:
+                ip = await adapter.add_ip(pid)
+                notes.append(ip.address)
+            except AdapterError as e:  # the server exists - report, don't fail it
+                notes.append(f"extra IP {n + 1} failed: {e}")
+                break
+    finally:
+        try:
+            await adapter.close()
+        except Exception:  # noqa: BLE001
+            pass
+    with db.connect() as conn:
+        cur = conn.execute(
+            "UPDATE orders SET status='provisioned', resulting_provider_id=?, updated_at=? "
+            "WHERE id=? AND status='executing'", (pid, db.now(), order_id))
+        if cur.rowcount:
+            conn.execute("INSERT INTO order_events(order_id, status, detail, created_at) "
+                         "VALUES(?, 'provisioned', ?, ?)",
+                         (order_id, f"server {pid} created at the provider"
+                          + (f"; extra IPs: {', '.join(notes)}" if notes else ""), db.now()))
+    audit.record(user_id, "order.provisioned", f"order/{order_id}",
+                 after={"provider_id": pid, "mode": "real", "extra_ips": notes})
+    sync.request_sync(account["id"])
+    return "provisioned"
 
 
 def list_orders() -> list[dict]:

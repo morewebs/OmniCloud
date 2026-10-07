@@ -33,12 +33,17 @@ from typing import Any
 
 from . import http as phttp
 from .base import (
-    ActionTimeout, ActionResult, AdapterError, Allowance, Capability, Facet,
-    IpOffer, Money, Plan, ProviderAdapter, Server, ServerStatus,
-    TrafficCounting, parse_dt,
+    ActionTimeout, ActionResult, AdapterError, Allowance, Billing, Capability,
+    Facet, Invoice, IpAddress, IpOffer, Money, Plan, ProviderAdapter, Server,
+    ServerStatus, TrafficCounting, parse_dt,
 )
 
 API = "https://api.leaseweb.com/publicCloud/v1"
+# Invoices API v1 (developer.leaseweb.com): invoices carry dueDate,
+# openAmount and status OPEN|PAID|READY|CANCELLED|OVERDUE; /proforma is the
+# next invoice's running estimate. Post-paid - there is no balance.
+INVOICES_API = "https://api.leaseweb.com/invoices/v1"
+PROVISION_BUDGET_S = 900
 
 # Verified state enum (developer.leaseweb.com instance schema).
 STATE_MAP = {
@@ -148,7 +153,19 @@ class LeasewebAdapter(ProviderAdapter):
             ipv4 = next((ip["ip"] for ip in (row.get("ips") or [])
                          if ip.get("version") == 4), None)
 
+        # list only: the Public Cloud API has no endpoint to add or release
+        # an IP (GET list, reverse lookup and null-route only)
+        ips = [IpAddress(address=ip["ip"], version=int(ip.get("version") or 4),
+                         primary=ip.get("mainIp") is not False or ip["ip"] == ipv4,
+                         kind="main" if ip.get("mainIp") else "additional")
+               for ip in (row.get("ips") or [])
+               if ip.get("ip") and str(ip.get("networkType", "PUBLIC")).upper() == "PUBLIC"]
+        null_routed = next((ip["ip"] for ip in row.get("ips") or []
+                            if ip.get("nullRouted")), None)
+
         facets = []
+        if null_routed:
+            facets.append(Facet(label="null-routed", value=null_routed))
         if itype:
             facets.append(Facet(label="instance type", value=str(itype)))
         speed = (row.get("resources") or {}).get("publicNetworkSpeed") or {}
@@ -173,6 +190,7 @@ class LeasewebAdapter(ProviderAdapter):
             labels=None,
             monthly_price=price,
             allowance=allowance,
+            ips=ips,
             facets=facets,
             not_exposed=["labels", "allowance_bytes_per_instance"],
         )
@@ -342,6 +360,59 @@ class LeasewebAdapter(ProviderAdapter):
                 return ActionResult(detail=f"state now {last}")
             await asyncio.sleep(POLL_INTERVAL)
         raise ActionTimeout(f"leaseweb power action on {server_id} (last state {last})")
+
+    async def provision(self, plan_name: str, location: str, options: dict) -> str:
+        """POST /instances (monthly contract, 1-month term, billed monthly),
+        then poll until the provider reports RUNNING. The OS credentials
+        stay at LeaseWeb (GET .../credentials) - never stored here."""
+        if not options.get("image"):
+            raise AdapterError("choose an image for the new instance")
+        r = await self.h.request("POST", "/instances", retry=False, json={
+            "region": location, "type": plan_name, "imageId": str(options["image"]),
+            "reference": options.get("hostname") or f"omni-{plan_name}",
+            "contractType": "MONTHLY", "contractTerm": 1, "billingFrequency": 1,
+            "rootDiskStorageType": "LOCAL"})
+        self.h._raise_for_status(r)
+        iid = str(r.json().get("id") or "")
+        if not iid:
+            raise AdapterError("leaseweb accepted the order but returned no instance id - "
+                               "check the customer portal before ordering again")
+        deadline = time.monotonic() + PROVISION_BUDGET_S
+        state = "?"
+        while time.monotonic() < deadline:
+            state = str((await self.h.get_json(f"/instances/{iid}")).get("state", "?")).upper()
+            if state == "RUNNING":
+                return iid
+            if state in ("FAILED", "DESTROYED"):
+                raise AdapterError(f"leaseweb instance {iid} ended in state {state}")
+            await asyncio.sleep(POLL_INTERVAL)
+        raise ActionTimeout(f"leaseweb instance {iid} still {state}")
+
+    async def get_billing(self) -> Billing:
+        data = await self.h.get_json(f"{INVOICES_API}/invoices", params={"limit": 20})
+        invoices = []
+        for inv in data.get("invoices", []):
+            cur = inv.get("currency") or "EUR"
+            money = lambda v: (Money(amount=Decimal(str(v)), currency=cur)  # noqa: E731
+                               if v is not None else None)
+            invoices.append(Invoice(
+                id=str(inv.get("id")), date=parse_dt(inv.get("date")),
+                due_date=parse_dt(inv.get("dueDate")),
+                total=money(inv.get("total")), open_amount=money(inv.get("openAmount")),
+                status=str(inv.get("status") or ""),
+            ))
+        upcoming = None
+        try:
+            pf = await self.h.get_json(f"{INVOICES_API}/invoices/proforma")
+            if pf.get("total") is not None:
+                upcoming = Money(amount=Decimal(str(pf["total"])),
+                                 currency=pf.get("currency") or "EUR")
+        except AdapterError:
+            pass
+        return Billing(model="monthly invoice in arrears (post-paid)",
+                       invoices=invoices, upcoming=upcoming,
+                       not_exposed=["balance", "month_to_date", "renewals"]
+                                   + ([] if upcoming else ["upcoming"]))
 
     async def close(self) -> None:
         await self.h.aclose()

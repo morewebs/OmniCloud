@@ -17,7 +17,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any
 
@@ -25,9 +25,9 @@ import httpx
 
 from . import http as phttp
 from .base import (
-    ActionTimeout, ActionResult, AdapterError, Allowance, Capability,
-    Facet, IpOffer, Money, Plan, ProviderAdapter, Server, ServerStatus,
-    TrafficCounting, parse_dt,
+    ActionTimeout, ActionResult, AdapterError, Allowance, Billing, Capability,
+    Facet, Invoice, IpAddress, IpCost, IpOffer, Money, PaymentRequired, Plan,
+    ProviderAdapter, Renewal, Server, ServerStatus, TrafficCounting, parse_dt,
 )
 
 API = "https://eu.api.ovh.com/1.0"
@@ -85,7 +85,16 @@ CLOUD_WINDOW = ("outgoing (egress) traffic, current calendar month; "
 CAPABILITIES = frozenset({
     Capability.POWER_ON, Capability.POWER_OFF, Capability.REBOOT,
     Capability.SHUTDOWN, Capability.RENAME, Capability.DELETE,
+    Capability.IP_ADD, Capability.IP_RELEASE, Capability.IP_CHANGE,
 })
+
+# Additional IP for a VPS: the order cart (the old /order/vps/{sn}/ip path
+# is gone). Checkout NEVER auto-pays: it creates an unpaid order whose
+# url the operator pays - a wrong order can simply be left unpaid.
+# Unverified until tested live: the cart configuration labels (destination
+# = the VPS serviceName, country = its datacenter's country).
+IP_PLAN_CODE = "ip-failover-ripe"
+POLL_IP_RELEASE_S = 120
 
 
 class OvhAdapter(ProviderAdapter):
@@ -197,15 +206,25 @@ class OvhAdapter(ProviderAdapter):
             return await self._cloud_server(project, row)
         raise AdapterError(f"unknown OVH provider_id: {provider_id}")
 
+    async def _vps_ips(self, sn: str) -> list[IpAddress]:
+        """Every address on the VPS: type primary|additional per the spec."""
+        out: list[IpAddress] = []
+        for ip in await self.h.get_json(f"/vps/{sn}/ips"):
+            d = await self.h.get_json(f"/vps/{sn}/ips/{ip}")
+            addr = d.get("ipAddress") or ip
+            if any(x.address == addr for x in out):
+                continue
+            out.append(IpAddress(address=addr, version=6 if d.get("version") == "v6" else 4,
+                                 primary=d.get("type") != "additional",
+                                 kind=str(d.get("type") or "primary")))
+        return out
+
     async def _vps_server(self, sn: str) -> Server:
         row = await self.h.get_json(f"/vps/{sn}")
         infos = await self.h.get_json(f"/vps/{sn}/serviceInfos")
-        ipv4 = None
-        for ip in await self.h.get_json(f"/vps/{sn}/ips"):
-            detail = await self.h.get_json(f"/vps/{sn}/ips/{ip}")
-            if detail.get("version") == "v4":
-                ipv4 = detail["ipAddress"]
-                break
+        ips = await self._vps_ips(sn)
+        ipv4 = next((i.address for i in ips if i.version == 4 and i.primary),
+                    next((i.address for i in ips if i.version == 4), None))
         model = row.get("model") or {}
         facets = [
             Facet(label="product", value="vps"),
@@ -235,6 +254,7 @@ class OvhAdapter(ProviderAdapter):
             monthly_price=None,  # the /vps API carries no price at all
             allowance=None,      # unmetered product - no usage endpoint
             facets=facets,
+            ips=ips,
             not_exposed=["traffic usage", "price", "labels"],
         )
 
@@ -262,9 +282,13 @@ class OvhAdapter(ProviderAdapter):
         elif monthly_billing:
             facets.append(Facet(label="billing", value="hourly"))
         ipv4 = None
+        ips = []
         for ip in row.get("ipAddresses") or []:
             if ip.get("version") == 4 and not ipv4:
                 ipv4 = ip.get("ip")
+            if ip.get("ip") and ip.get("type") != "private":
+                ips.append(IpAddress(address=ip["ip"], version=int(ip.get("version") or 4),
+                                     primary=True, kind=str(ip.get("type") or "public")))
         allowance = None
         used = row.get("currentMonthOutgoingTraffic")
         if used is not None:
@@ -289,6 +313,7 @@ class OvhAdapter(ProviderAdapter):
             monthly_price=price,
             allowance=allowance,
             facets=facets,
+            ips=ips,
             not_exposed=["labels", "overage price"],
         )
 
@@ -347,6 +372,175 @@ class OvhAdapter(ProviderAdapter):
             _, project, sid = server_id.split(":", 2)
             return await self._cloud_action(cap, project, sid, params)
         raise AdapterError(f"unknown OVH provider_id: {server_id}")
+
+    # -- IPs: VPS additional IPs ------------------------------------------------
+
+    @staticmethod
+    def _vps_sn(server_id: str) -> str:
+        if not server_id.startswith("vps:"):
+            raise AdapterError("additional IPs are managed for OVH VPS only, "
+                               "not Public Cloud instances")
+        return server_id[4:]
+
+    async def add_ip(self, server_id: str) -> IpAddress:
+        sn = self._vps_sn(server_id)
+        await self._ensure_auth()
+        me = await self.h.get_json("/me")
+        dc = await self.h.get_json(f"/vps/{sn}/datacenter")
+        country = str(dc.get("country") or me.get("ovhSubsidiary") or "FR").upper()
+        await self._cart_checkout("ip", {"planCode": IP_PLAN_CODE, "duration": "P1M",
+                                         "pricingMode": "default", "quantity": 1},
+                                  [("destination", sn), ("country", country)],
+                                  f"extra IP for {sn}")
+        raise AdapterError("unreachable")  # _cart_checkout always raises
+
+    async def _cart_checkout(self, product: str, item: dict,
+                             config: list[tuple[str, str]], what: str) -> None:
+        """Cart -> item -> configuration -> checkout, every POST sent once.
+        Checkout never auto-pays: it always ends in PaymentRequired with
+        the order's pay URL (a wrong order is simply left unpaid)."""
+        me = await self.h.get_json("/me")
+
+        async def post(path: str, body: dict | None = None) -> dict:
+            r = await self.h.request("POST", path, json=body, retry=False)
+            self.h._raise_for_status(r)
+            return r.json() if r.content else {}
+
+        cart = await post("/order/cart", {"ovhSubsidiary": me.get("ovhSubsidiary") or "FR",
+                                          "description": f"omnicloud: {what}"})
+        cid = cart["cartId"]
+        await post(f"/order/cart/{cid}/assign")
+        added = await post(f"/order/cart/{cid}/{product}", item)
+        iid = added["itemId"]
+        for label, value in config:
+            await post(f"/order/cart/{cid}/item/{iid}/configuration",
+                       {"label": label, "value": value})
+        order = await post(f"/order/cart/{cid}/checkout", {
+            "autoPayWithPreferredPaymentMethod": False, "waiveRetractationPeriod": False})
+        raise PaymentRequired(what, str(order.get("orderId", "?")), order.get("url"))
+
+    async def provision(self, plan_name: str, location: str, options: dict) -> str:
+        """VPS through the order cart (planCode + vps_datacenter [+ vps_os]):
+        an unpaid order; the VPS appears in the fleet once paid and
+        delivered. Unverified until tested live: the vps_os value format."""
+        await self._ensure_auth()
+        config = [("vps_datacenter", location)]
+        if options.get("image"):
+            config.append(("vps_os", str(options["image"])))
+        await self._cart_checkout("vps", {"planCode": plan_name, "duration": "P1M",
+                                          "pricingMode": "default", "quantity": 1},
+                                  config, f"VPS {plan_name} in {location}")
+        raise AdapterError("unreachable")  # _cart_checkout always raises
+
+    async def release_ip(self, server_id: str, address: str) -> None:
+        sn = self._vps_sn(server_id)
+        await self._ensure_auth()
+        ips = {i.address: i for i in await self._vps_ips(sn)}
+        if address not in ips:
+            return  # already gone
+        if ips[address].primary:
+            raise AdapterError(f"{address} is the VPS's primary IP - never released here")
+        await self.h.delete(f"/vps/{sn}/ips/{address}")
+        deadline = time.monotonic() + POLL_IP_RELEASE_S
+        while address in await self.h.get_json(f"/vps/{sn}/ips"):
+            if time.monotonic() >= deadline:
+                raise ActionTimeout(f"release {address} from {sn}")
+            await asyncio.sleep(POLL_INTERVAL)
+
+    async def ip_cost(self, server_id: str) -> IpCost | None:
+        try:
+            data = await self.h.get_json("/order/catalog/formatted/ip",
+                                         params={"ovhSubsidiary": "FR"})
+        except AdapterError:
+            data = {}
+        note = ("ordered as an unpaid OVH order (pay it at the order link); "
+                "billed monthly from delivery")
+        for p in data.get("plans", []):
+            if p.get("planCode") == IP_PLAN_CODE:
+                price = OvhCatalogAdapter._monthly_price(p.get("pricings", []))
+                if price is not None:
+                    return IpCost(price=Money(amount=price, currency="EUR",
+                                              vat_inclusive=False), per="month", note=note)
+        return IpCost(price=None, per="month", note=note)
+
+    # -- billing (/me): pay-per-order against a registered payment method ------
+
+    @staticmethod
+    def _money(p: dict | None) -> Money | None:
+        """OVH order.Price {value, currencyCode, text}."""
+        if not isinstance(p, dict) or p.get("value") is None:
+            return None
+        return Money(amount=Decimal(str(p["value"])), currency=p.get("currencyCode") or "EUR")
+
+    async def get_billing(self) -> Billing:
+        await self._ensure_auth()
+        not_exposed = ["month_to_date", "upcoming"]
+        now = datetime.now(timezone.utc)
+
+        # prepaid credit (most accounts have none - they pay each order)
+        balance = None
+        try:
+            for name in await self.h.get_json("/me/credit/balance"):
+                b = await self.h.get_json(f"/me/credit/balance/{name}")
+                m = self._money(b.get("amount"))
+                if m is None or b.get("type") not in ("PREPAID_ACCOUNT", "DEPOSIT"):
+                    continue
+                if balance is None:
+                    balance = m
+                elif balance.currency == m.currency:
+                    balance = Money(amount=balance.amount + m.amount, currency=m.currency)
+        except AdapterError:
+            pass
+        if balance is None:
+            not_exposed.append("balance")
+
+        invoices = []
+        since = (now - timedelta(days=90)).date().isoformat()
+        for bid in sorted(await self.h.get_json("/me/bill", params={"date.from": since}),
+                          reverse=True)[:12]:
+            b = await self.h.get_json(f"/me/bill/{bid}")
+            r = await self.h.request("GET", f"/me/bill/{bid}/debt")
+            debt = r.json() if r.status_code == 200 else None
+            invoices.append(Invoice(
+                id=str(b.get("billId", bid)), date=parse_dt(b.get("date")),
+                due_date=parse_dt(debt.get("dueDate")) if debt else None,
+                total=self._money(b.get("priceWithTax")),
+                open_amount=self._money(debt.get("dueAmount")) if debt else None,
+                # the provider's own debt status; no debt record = nothing owed on it
+                status=str(debt.get("status")) if debt else "no debt",
+                url=b.get("url"),
+            ))
+
+        unpaid = []
+        since = (now - timedelta(days=30)).date().isoformat()
+        for oid in sorted(await self.h.get_json("/me/order", params={"date.from": since}),
+                          reverse=True)[:15]:
+            if await self.h.get_json(f"/me/order/{oid}/status") != "notPaid":
+                continue
+            o = await self.h.get_json(f"/me/order/{oid}")
+            price = self._money(o.get("priceWithTax"))
+            unpaid.append(Invoice(id=str(oid), date=parse_dt(o.get("date")),
+                                  due_date=parse_dt(o.get("expirationDate")),
+                                  total=price, open_amount=price, status="notPaid",
+                                  url=o.get("url")))
+
+        renewals = []
+        for sn in await self.h.get_json("/vps"):
+            infos = await self.h.get_json(f"/vps/{sn}/serviceInfos")
+            renew = infos.get("renew") or {}
+            renewals.append(Renewal(provider_id=f"vps:{sn}", name=sn,
+                                    date=parse_dt(infos.get("expiration")),
+                                    auto=renew.get("automatic") if renew else None))
+        return Billing(model="pay per order; services renew monthly against the "
+                             "registered payment method",
+                       balance=balance, invoices=invoices, unpaid_orders=unpaid,
+                       renewals=renewals, not_exposed=not_exposed)
+
+    async def order_status(self, order_ref: str) -> str | None:
+        await self._ensure_auth()
+        st = await self.h.get_json(f"/me/order/{order_ref}/status")
+        return {"delivered": "delivered", "cancelled": "cancelled",
+                "notPaid": "unpaid"}.get(st)
 
     async def _vps_action(self, cap: Capability, sn: str,
                           params: dict) -> ActionResult:

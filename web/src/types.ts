@@ -24,6 +24,24 @@ export interface Facet {
   value: string;
 }
 
+/** One public address. `primary` is the server's own IP - never changed or
+ *  released by the panel; the others are the swappable extras. */
+export interface IpAddress {
+  address: string;
+  version: number;
+  primary: boolean;
+  kind: string;
+  provider_ip_id: string | null;
+  monthly_price: Money | null;
+}
+
+/** What acquiring one IP costs, in the provider's own billing unit. */
+export interface IpCost {
+  price: Money | null;
+  per: 'hour' | 'month' | 'purchase';
+  note: string | null;
+}
+
 export interface Server {
   provider_id: string;
   name: string;
@@ -39,6 +57,7 @@ export interface Server {
   allowance: Allowance | null;
   facets: Facet[];
   not_exposed: string[];
+  ips?: IpAddress[];
   // cache metadata (added by the API)
   last_seen_at?: string;
   traffic_history?: { day: string; bytes_used: number }[];
@@ -71,6 +90,7 @@ export interface AccountRow {
   adapter: string;
   name: string;
   enabled: number;
+  purchases_enabled: number;
   created_at: string;
   last4: string | null;
   scope: string | null;
@@ -80,10 +100,22 @@ export interface AccountRow {
   last_error: string | null;
 }
 
+export interface CredentialField {
+  name: string;
+  label: string;
+  secret: boolean;
+  default: string | null;
+  help: string | null;
+}
+
 export interface AdapterInfo {
   key: string;
   display_name: string;
   capabilities: string[];
+  /** fleet adapters: the inputs of the add-account form */
+  credential_fields?: CredentialField[];
+  /** fleet adapters: real server orders are wired (provision) */
+  orders?: boolean;
   /** catalog providers only: 'live' | 'seeded' */
   source?: 'live' | 'seeded';
 }
@@ -128,6 +160,17 @@ export const CAPABILITY_LABELS: Record<string, string> = {
   firewall: 'Firewall',
   rebuild: 'Rebuild',
   delete: 'Delete',
+  set_password: 'Set root password',
+  ip_add: 'Add IP',
+  ip_release: 'Release IP',
+  ip_change: 'Change IP',
+};
+
+/** "€0.0038 / hour", "€3.57 / month", "price on order / purchase" */
+export const IP_COST_PER: Record<IpCost['per'], string> = {
+  hour: 'per hour while it exists',
+  month: 'per month',
+  purchase: 'per purchase',
 };
 
 // ---- v2: catalog + orders ----
@@ -163,7 +206,9 @@ export interface Plan {
 export interface OrderRow {
   id: number;
   mode: 'prototype' | 'real';
-  status: 'draft' | 'confirmed' | 'executing' | 'provisioned' | 'failed' | 'cancelled';
+  status: 'draft' | 'confirmed' | 'executing' | 'awaiting_payment' | 'provisioned' | 'failed'
+    | 'cancelled';
+  kind: 'server' | 'ip';
   adapter: string;
   account_id: number | null;
   plan_name: string;
@@ -172,8 +217,53 @@ export interface OrderRow {
   plan_snapshot: string; // JSON
   estimated_monthly: string; // JSON {amount, currency, partial}
   resulting_provider_id: string | null;
+  target_provider_id: string | null;  // kind=ip: the server the IP is for
+  provider_ref: string | null;        // the provider's own order id
+  pay_url: string | null;             // awaiting_payment: where to pay
   requested_by: number;
   username: string | null;
   created_at: string;
   updated_at: string;
+}
+
+// ---- billing: per-account snapshot (server/adapters/base.py Billing) ----
+
+export interface Invoice {
+  id: string;
+  date: string | null;
+  due_date: string | null;
+  total: Money | null;
+  open_amount: Money | null;
+  status: string;            // the provider's own word, rendered verbatim
+  url: string | null;
+}
+
+export interface Renewal {
+  provider_id: string;
+  name: string;
+  date: string | null;
+  auto: boolean | null;
+}
+
+export interface Billing {
+  model: string;
+  balance: Money | null;
+  month_to_date: Money | null;
+  upcoming: Money | null;
+  invoices: Invoice[];
+  unpaid_orders: Invoice[];
+  renewals: Renewal[];
+  not_exposed: string[];
+}
+
+export interface BillingAccountRow {
+  account_id: number;
+  adapter: string;
+  name: string;
+  enabled: number;
+  billing: Billing | null;
+  fetched_at: string | null;
+  last_error: string | null;
+  supported: boolean;
+  low_balance_threshold: string | null;
 }

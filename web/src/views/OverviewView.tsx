@@ -91,15 +91,21 @@ export function OverviewView() {
   const downAlerts = d.alerts.filter(a => a.kind === 'down');
   // owner's first question: what will I pay? base + projected overage, per
   // currency, joined (never summed across currencies)
-  const overageByCur = new Map(Object.entries(d.projected_overage));
-  const bill = Object.entries(d.spend)
-    .flatMap(([, byCur]) => Object.entries(byCur))
-    .map(([cur, base]) => [cur, base + (overageByCur.get(cur) ?? 0)] as const);
+  // merge spend per currency across adapters FIRST, then add that
+  // currency's overage once (per-adapter rows double-counted the overage
+  // and showed "€X + €Y" for one currency)
+  const baseByCur = new Map<string, number>();
+  for (const byCur of Object.values(d.spend))
+    for (const [cur, amt] of Object.entries(byCur))
+      baseByCur.set(cur, (baseByCur.get(cur) ?? 0) + amt);
+  const bill = [...new Set([...baseByCur.keys(), ...Object.keys(d.projected_overage)])]
+    .map(cur => [cur, (baseByCur.get(cur) ?? 0) + (d.projected_overage[cur] ?? 0)] as const);
   const accountName = (id: number) =>
     accounts.data?.find(a => a.id === id)?.name ?? `account ${id}`;
   // non-alert pick for the summary Alert: down > allowance > sync
   const worst = downAlerts[0]
     ?? d.alerts.find(a => (a.pct ?? 0) >= 100)
+    ?? d.alerts.find(a => a.kind === 'billing' && /OVERDUE/.test(a.error ?? ''))
     ?? d.alerts.find(a => a.kind !== 'down')
     ?? d.alerts[0];
 
@@ -187,7 +193,8 @@ export function OverviewView() {
           thing that needs a decision (down-alerts already got their banner
           above; this one is for allowance + sync) */}
       {d.alerts.length > 0 && worst && worst.kind !== 'down' && (
-        <Alert severity={(worst.pct ?? 0) >= 100 ? 'error' : 'warning'} icon={false}
+        <Alert severity={(worst.pct ?? 0) >= 100 || /OVERDUE/.test(worst.error ?? '')
+                         ? 'error' : 'warning'} icon={false}
                sx={{ alignItems: 'center' }}>
           <Stack direction="row" spacing={2} sx={{ alignItems: 'center', flexWrap: 'wrap', gap: 1 }}>
             <Box>

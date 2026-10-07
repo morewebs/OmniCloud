@@ -13,7 +13,8 @@ const STATUS_TEXT: Record<number, string> = {
   429: 'Rate limited — try again in a moment',
 };
 
-export async function api<T = unknown>(path: string, init?: RequestInit): Promise<T> {
+export async function api<T = unknown>(path: string,
+                                       init?: RequestInit & { timeoutMs?: number }): Promise<T> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   const method = (init?.method ?? 'GET').toUpperCase();
   if (method !== 'GET') headers['X-Requested-With'] = 'XMLHttpRequest';
@@ -22,11 +23,12 @@ export async function api<T = unknown>(path: string, init?: RequestInit): Promis
     r = await fetch(path, {
       ...init,
       headers: { ...headers, ...init?.headers as object },
-      signal: AbortSignal.timeout(TIMEOUT_MS),
+      signal: AbortSignal.timeout(init?.timeoutMs ?? TIMEOUT_MS),
     });
   } catch (e) {
     if (e instanceof DOMException && e.name === 'TimeoutError')
-      throw new Error('Timed out — the server did not answer in 30s');
+      throw new Error(`Timed out — the server did not answer in ${Math.round(
+        (init?.timeoutMs ?? TIMEOUT_MS) / 1000)}s`);
     throw new Error('Network error — check your connection and retry');
   }
   if (!r.ok) {
@@ -37,6 +39,8 @@ export async function api<T = unknown>(path: string, init?: RequestInit): Promis
       // FastAPI {detail: "..."} — but 422 validation errors carry an ARRAY;
       // only a string detail replaces the human text
       if (typeof j?.detail === 'string') detail = j.detail;
+      // structured refusals (IP API: 429/502) carry {message, ...}
+      else if (typeof j?.detail?.message === 'string') detail = j.detail.message;
     } catch { /* non-JSON body — keep the status text */ }
     // Session expired mid-use: bounce to the login page once, globally -
     // otherwise the operator is stranded on a dead dashboard.
@@ -51,8 +55,8 @@ export async function api<T = unknown>(path: string, init?: RequestInit): Promis
   return r.json() as Promise<T>;
 }
 
-export function post<T = unknown>(path: string, body?: unknown) {
-  return api<T>(path, { method: 'POST', body: JSON.stringify(body ?? {}) });
+export function post<T = unknown>(path: string, body?: unknown, timeoutMs?: number) {
+  return api<T>(path, { method: 'POST', body: JSON.stringify(body ?? {}), timeoutMs });
 }
 export function patch(path: string, body: unknown) {
   return api(path, { method: 'PATCH', body: JSON.stringify(body) });
@@ -60,8 +64,8 @@ export function patch(path: string, body: unknown) {
 export function put(path: string, body: unknown) {
   return api(path, { method: 'PUT', body: JSON.stringify(body) });
 }
-export function del(path: string) {
-  return api(path, { method: 'DELETE' });
+export function del<T = unknown>(path: string, timeoutMs?: number) {
+  return api<T>(path, { method: 'DELETE', timeoutMs });
 }
 
 // SSE -> query invalidation. EventSource reconnects natively; each event just

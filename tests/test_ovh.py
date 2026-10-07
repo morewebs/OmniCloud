@@ -323,6 +323,7 @@ def test_capabilities_exact():
     assert OvhAdapter.capabilities == frozenset({
         Capability.POWER_ON, Capability.POWER_OFF, Capability.REBOOT,
         Capability.SHUTDOWN, Capability.RENAME, Capability.DELETE,
+        Capability.IP_ADD, Capability.IP_RELEASE, Capability.IP_CHANGE,
     })
 
 

@@ -19,6 +19,7 @@ import { usePageTitle } from '../usePageTitle';
 import type { Allowance } from '../types';
 import { AllowanceMeter } from '../components/AllowanceMeter';
 import { Value } from '../components/Value';
+import { AccountBilling } from '../components/AccountBilling';
 
 interface AllowanceRow {
   account_id: number;
@@ -41,6 +42,8 @@ export function AllowancesView() {
     queryKey: ['billing'], queryFn: () => api('/api/billing/summary') });
   const allowances = useQuery<AllowanceRow[]>({ queryKey: ['allowances'],
     queryFn: () => api<AllowanceRow[]>('/api/allowances') });
+  const me = useQuery({ queryKey: ['me'],
+    queryFn: () => api<{ role: string }>('/api/auth/me') });
   const [page, setPage] = useState(0);
   const [rowsPerPage, setRowsPerPage] = useState(25);
 
@@ -78,7 +81,7 @@ export function AllowancesView() {
   return (
     <Stack spacing={3}>
       <PageHeader title="Billing"
-        subtitle="Traffic allowances and overage exposure — every number adapter-reported."
+        subtitle="Balances, invoices, renewals, traffic allowances and overage exposure — every number provider-reported."
         actions={
           <Button size="small" variant="outlined" disabled={rows.length === 0}
                   onClick={() =>
@@ -100,6 +103,8 @@ export function AllowancesView() {
           </Button>
         } />
 
+      <AccountBilling isAdmin={me.data?.role === 'admin'} />
+
       <Box>
         <Typography variant="subtitle1" gutterBottom>Billing exposure</Typography>
         {(billing.data ?? []).map(b => (
@@ -118,8 +123,9 @@ export function AllowancesView() {
         {overageByCur.size > 0 && (
           <Typography variant="body2" sx={{ color: 'text.secondary' }}>
             Projected overage total:{' '}
-            {[...overageByCur.entries()].map(([cur, amt]) =>
-              <span key={cur} className="num">{fmtCur(cur, amt)}</span>).join(' + ')}
+            <span className="num">
+              {[...overageByCur.entries()].map(([cur, amt]) => fmtCur(cur, amt)).join(' + ')}
+            </span>
           </Typography>
         )}
       </Box>

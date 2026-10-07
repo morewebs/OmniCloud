@@ -2,8 +2,45 @@
 
 ## Unreleased
 
+- **IP change API** (`POST /api/ips/{ip}/change`, docs/ip-change.md): an
+  operator's own server/script swaps one of a server's extra IPs for a
+  fresh one and gets the new address back; testing it (e.g. for DPI
+  filtering) stays in the caller's script. The primary IP is never
+  touched. New-first by default (acquire, then release), `release_first`
+  for servers at their extra-IP cap; an acquisition that fails part-way
+  is cleaned up and the response says exactly what state the server is
+  in. Guarded by a per-account **Purchases** switch (off by default), a
+  per-account daily acquisition cap, one IP operation per server at a
+  time, and **scoped API tokens** (`ip_change` reaches only this API).
+  Providers: Gcore Cloud (reserved IPs, billed per minute), Hetzner
+  (floating IPs), Gcore Hosting (BILLmanager additional IPs), OVH VPS
+  (unpaid cart order -> 202 + pay link). Server dialog gains an IP section
+  (change / release / add, cost per provider unit).
+- **Gcore Hosting adapter** (hosting.gcore.com, BILLmanager 6) from the
+  panel's own calls: servers, IPs, root password, delete, balance,
+  payments, renewals. Signs in with the panel username + password.
+- **Netlen, Tube-hosting, LightNode fleet adapters**: servers, IPs, power
+  actions (each confirmed on the provider's view); Netlen can add an IP
+  (no release in its API, so no change); billing where the API has it.
+- **Billing per account**: balance, invoices (due date, open amount,
+  provider status), unpaid orders with pay links, renewals - hourly on
+  each account's own timer; overview alerts for overdue/unpaid invoices,
+  unpaid orders, renewals without auto-renew and a low-balance threshold.
+  Providers whose API has no billing say "not exposed", never zero.
+- **Real orders**: an order bound to an account with purchases on is
+  executed at the provider (Hetzner, LeaseWeb, OVH as an unpaid order),
+  extra IPs bought on the new server; typed "Buy" confirm; orders parked
+  in `awaiting_payment` settle when the provider delivers.
+- Credential forms come from each adapter (`credential_fields`): username
+  + password panels no longer pack secrets into one token string.
+- Schema v4 with an in-place migration from v3 (orders history kept).
+- Fixes: "This month's bill" added each currency's overage once per
+  provider; a failed order could stay stuck in `executing` (audit write
+  deadlocked its transaction); Gcore made the order dialog 500 (no
+  `list_images`); Hetzner advertised every new capability automatically;
+  LightNode's seed offered extra IPs on one plan only.
 - **MCP server** at `/mcp` (Streamable HTTP, stateless JSON): AI agents
-  drive the panel through 44 tools covering the whole REST surface —
+  drive the panel through 50 tools covering the whole REST surface —
   fleet, allowances, billing, catalog, orders, server actions, firewalls,
   accounts, users, settings, audit, updates — plus three prompts
   (fleet triage, cost review, plan comparison). Auth is personal API tokens
@@ -15,7 +52,8 @@
   provider hasn't confirmed within `wait_seconds` — never reported as
   success early. Destructive tools carry `destructiveHint`. Reference:
   [docs/mcp.md](docs/mcp.md). The Vite dev server proxies `/mcp` as well.
-- `GET /api/actions/{id}`: single action row.
+- `GET /api/actions/{id}`: single action row (IP changes add their
+  structured `result`). `ip_change`-scoped tokens are refused at `/mcp`.
 - **Fix:** a provider account created or re-enabled at runtime now starts
   syncing immediately. Its sync loop was never spawned until the next
   restart, while Refresh / force-sync still answered ok. Force-sync's wake

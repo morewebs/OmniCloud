@@ -70,17 +70,19 @@ async def test_status_map_honest():
     await a.close()
 
 
-async def test_ipv4_floating_only_never_private_fixed():
-    """Public IPv4 = the type:"floating" address ONLY. A fixed addr cannot
-    be told public from private (the addresses map keys are user-named
-    networks, and 10.x/172.16.x/192.168.x are private) - returning one as
-    the public IP would be a guess; None, never invented."""
+async def test_ipv4_floating_first_never_private_fixed():
+    """Public IPv4 = the floating address, else a fixed address outside the
+    private ranges (RFC 1918/CGNAT/link-local are fixed by standard, so a
+    fixed addr outside them IS public - the VM's own external interface).
+    A private fixed addr is never shown as the public IP."""
     transport, _, _ = mock_gcore_transport()
     a = make_adapter(transport)
     servers = await a.list_servers()
     by_pid = {s.provider_id: s for s in servers}
-    assert by_pid[WEB_PID].ipv4 == "203.0.113.10"      # floating
-    assert by_pid[DB_PID].ipv4 is None   # only a fixed addr - not provably public
+    web = by_pid[WEB_PID]
+    assert web.ipv4 == "203.0.113.10"                  # floating
+    assert "10.0.10.5" not in {i.address for i in web.ips}  # private fixed: not public
+    assert by_pid[DB_PID].ipv4 == "198.51.100.20"      # public fixed (own interface)
     assert by_pid[EDGE_PID].ipv4 is None               # empty addresses map
     await a.close()
 
@@ -299,6 +301,7 @@ def test_capabilities_exact():
         Capability.POWER_ON, Capability.POWER_OFF, Capability.REBOOT,
         Capability.SHUTDOWN, Capability.RENAME, Capability.RELABEL,
         Capability.DELETE,
+        Capability.IP_ADD, Capability.IP_RELEASE, Capability.IP_CHANGE,
     })
 
 

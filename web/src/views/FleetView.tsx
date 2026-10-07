@@ -38,6 +38,7 @@ import { ConfirmDialog } from '../components/ConfirmDialog';
 import { FirewallDialog, AttachFirewallDialog, CreateFirewallDialog, toHetznerRules } from '../components/FirewallDialog';
 import type { FirewallRuleDetail } from '../components/FirewallDialog';
 import { PageHeader } from '../components/PageHeader';
+import { IpSection } from '../components/IpSection';
 import { usePageTitle } from '../usePageTitle';
 import { StatTile } from '../components/StatTile';
 
@@ -76,6 +77,7 @@ export function FleetView() {
     const q = search.toLowerCase();
     let out = all.filter(s => (!q || s.name.toLowerCase().includes(q)
       || (s.ipv4 ?? '').includes(q) || s.adapter.includes(q)
+      || (s.ips ?? []).some(ip => ip.address.includes(q))
       || (s.region ?? '').toLowerCase().includes(q))
       && (!statusFilter || s.status === statusFilter));
     if (sortBy === 'traffic') {
@@ -263,7 +265,16 @@ export function FleetView() {
                   <TableCell>
                     <Value value={s.server_type} notExposed={s.not_exposed.includes('server_type')} />
                   </TableCell>
-                  <TableCell><span className="num">{s.ipv4 ?? '—'}</span></TableCell>
+                  <TableCell>
+                    <span className="num">{s.ipv4 ?? '—'}</span>
+                    {(s.ips ?? []).filter(ip => !ip.primary).length > 0 && (
+                      <Tooltip title={(s.ips ?? []).filter(ip => !ip.primary)
+                        .map(ip => ip.address).join(', ')}>
+                        <Chip size="small" variant="outlined" sx={{ ml: 0.5, height: 18 }}
+                              label={`+${(s.ips ?? []).filter(ip => !ip.primary).length}`} />
+                      </Tooltip>
+                    )}
+                  </TableCell>
                   <TableCell>
                     {s.allowance ? <AllowanceMeter allowance={s.allowance} /> : '—'}
                   </TableCell>
@@ -364,6 +375,7 @@ function ServerDialog({ server, isAdmin, capabilities, onClose, onDone }: {
   const [rebuildImage, setRebuildImage] = useState('');
   const [rebuildImgStatus, setRebuildImgStatus] = useState<'loading' | 'error' | 'none' | 'ready'>('loading');
   const [rename, setRename] = useState(server.name);
+  const [newPassword, setNewPassword] = useState('');
   // server is a LIVE re-derived row: an untouched field follows server.name,
   // and once a rename lands (field === live name) the field is pristine again
   // - a stale draft must never rename the server BACK
@@ -498,6 +510,14 @@ function ServerDialog({ server, isAdmin, capabilities, onClose, onDone }: {
               </Box>
             </Stack>
 
+            {(!!server.ips?.length || !!server.ipv4) && (
+              <>
+                <Divider />
+                <IpSection server={server} isAdmin={isAdmin} capabilities={capabilities}
+                           onDone={onDone} />
+              </>
+            )}
+
             {isAdmin && (
               <>
                 <Divider />
@@ -540,6 +560,12 @@ function ServerDialog({ server, isAdmin, capabilities, onClose, onDone }: {
                   {has('rebuild') && (
                     <Button size="small" color="warning" disabled={busy}
                             onClick={() => setConfirm('rebuild')}>Rebuild…</Button>
+                  )}
+                  {has('set_password') && (
+                    <Button size="small" variant="outlined" disabled={busy}
+                            onClick={() => { setNewPassword(''); setConfirm('set_password'); }}>
+                      Set root password…
+                    </Button>
                   )}
                   {has('delete') && (
                     <Button size="small" color="error" disabled={busy}
@@ -614,6 +640,23 @@ function ServerDialog({ server, isAdmin, capabilities, onClose, onDone }: {
         <RebuildImagePicker adapter={server.adapter} value={rebuildImage}
                             onChange={setRebuildImage}
                             onStatus={setRebuildImgStatus} />
+      </ConfirmDialog>
+      <ConfirmDialog
+        open={confirm === 'set_password'}
+        title="Set root password"
+        serverName={server.name}
+        body={`Replace the root password of ${server.name}. The provider applies it; it can't be read back, so keep a copy.`}
+        confirmLabel="Set password"
+        requireTyped
+        confirming={busy}
+        error={error}
+        confirmDisabled={newPassword.length < 8}
+        onConfirm={() => act('set_password', { password: newPassword })}
+        onClose={() => { setNewPassword(''); setConfirm(null); }}
+      >
+        <TextField size="small" type="password" label="New root password" value={newPassword}
+                   autoComplete="new-password" onChange={e => setNewPassword(e.target.value)}
+                   helperText="At least 8 characters" fullWidth sx={{ mt: 1 }} />
       </ConfirmDialog>
       <ConfirmDialog
         open={confirm === 'delete'}

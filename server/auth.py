@@ -8,6 +8,7 @@ CSRF: SameSite=Strict + required X-Requested-With header on non-GET /api
 from __future__ import annotations
 
 import hashlib
+import re
 import secrets as pysecrets
 from dataclasses import dataclass
 
@@ -52,6 +53,29 @@ class User:
     username: str
     role: str
     disabled: bool
+    scope: str = "full"  # API-token scope; sessions are always full
+
+
+TOKEN_SCOPES = ("full", "ip_change")
+
+# What an ip_change-scoped token may reach: look an IP up, change it, and
+# collect a change's result after a dropped connection. It is the token an
+# operator's own server holds, so a leak there can't delete servers or read
+# billing.
+_IP_CHANGE_ROUTES = (
+    ("GET", re.compile(r"^/api/ips/[^/]+$")),
+    ("POST", re.compile(r"^/api/ips/[^/]+/change$")),
+    ("GET", re.compile(r"^/api/actions/\d+$")),
+    ("GET", re.compile(r"^/api/auth/me$")),
+)
+
+
+def scope_allows(scope: str, method: str, path: str) -> bool:
+    if scope == "full":
+        return True
+    if scope == "ip_change":
+        return any(m == method and rx.match(path) for m, rx in _IP_CHANGE_ROUTES)
+    return False
 
 
 MIN_PASSWORD_LEN = 8
@@ -159,6 +183,9 @@ def require_user(request: Request) -> User:
         user = user_for_bearer(request.headers.get("Authorization"))
     if user is None:
         raise HTTPException(status_code=401, detail="Not signed in")
+    if not scope_allows(user.scope, request.method, request.url.path):
+        raise HTTPException(status_code=403,
+                            detail=f"this API token is limited to the {user.scope} scope")
     return user
 
 
@@ -179,7 +206,7 @@ def user_for_bearer(header: str | None) -> User | None:
     token = header[7:].strip()
     with db.connect() as conn:
         row = conn.execute(
-            """SELECT u.*, t.id AS token_id FROM api_tokens t
+            """SELECT u.*, t.id AS token_id, t.scope AS token_scope FROM api_tokens t
                JOIN users u ON u.id = t.user_id
                WHERE t.token_hash=?""",
             (_hash(token),),
@@ -188,17 +215,20 @@ def user_for_bearer(header: str | None) -> User | None:
             return None
         conn.execute("UPDATE api_tokens SET last_used_at=? WHERE id=?",
                      (db.now(), row["token_id"]))
-    return User(row["id"], row["username"], row["role"], bool(row["disabled"]))
+    return User(row["id"], row["username"], row["role"], bool(row["disabled"]),
+                row["token_scope"])
 
 
-def create_api_token(user_id: int, name: str) -> tuple[int, str]:
+def create_api_token(user_id: int, name: str, scope: str = "full") -> tuple[int, str]:
     """Returns (token_id, plaintext) - the plaintext exists exactly once."""
+    if scope not in TOKEN_SCOPES:
+        raise ValueError(f"scope must be one of {', '.join(TOKEN_SCOPES)}")
     token = pysecrets.token_urlsafe(32)
     with db.connect() as conn:
         cur = conn.execute(
-            "INSERT INTO api_tokens(user_id, name, token_hash, created_at) "
-            "VALUES(?,?,?,?)",
-            (user_id, name, _hash(token), db.now()),
+            "INSERT INTO api_tokens(user_id, name, token_hash, scope, created_at) "
+            "VALUES(?,?,?,?,?)",
+            (user_id, name, _hash(token), scope, db.now()),
         )
         return cur.lastrowid, token
 
@@ -206,7 +236,7 @@ def create_api_token(user_id: int, name: str) -> tuple[int, str]:
 def list_api_tokens(user_id: int) -> list[dict]:
     with db.connect() as conn:
         rows = conn.execute(
-            "SELECT id, name, created_at, last_used_at FROM api_tokens "
+            "SELECT id, name, scope, created_at, last_used_at FROM api_tokens "
             "WHERE user_id=? ORDER BY id DESC", (user_id,),
         ).fetchall()
     return [dict(r) for r in rows]

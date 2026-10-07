@@ -10,9 +10,9 @@
 > facet, open-source hygiene.
 
 > **What OmniCloud is:** an open-source, multi-provider cloud control panel that aggregates
-> server fleets, traffic allowances, and billing exposure across cloud providers. First-class
-> adapters: **Hetzner** and **Leaseweb**. Roadmap adapters: OVH, Gcore, Netlen, Lightnode,
-> Tube-hosting.
+> server fleets, traffic allowances, and billing exposure across cloud providers. Fleet
+> adapters: **Hetzner**, **Leaseweb**, **OVH**, **Gcore Cloud**, **Gcore Hosting**,
+> **Netlen**, **Lightnode**, **Tube-hosting**.
 >
 > **Open-source constraint:** this document, all UI copy, screenshots, fixtures, and
 > documentation must contain **no real company names, credentials, IP addresses, or
@@ -110,8 +110,9 @@ never below 0.875rem; only labels and metadata go smaller.
 
 ## 4. The Provider-Agnostic UI Contract
 
-Every adapter (Hetzner, Leaseweb, later OVH/Gcore/Netlen/Lightnode/Tube-hosting) maps its
-API onto a **canonical entity model** — Server, Region, Image, Allowance, Invoice — and
+Every adapter (Hetzner, Leaseweb, OVH, Gcore, Netlen, Lightnode, Tube-hosting) maps its
+API onto a **canonical entity model** — Server, IpAddress, Region, Image, Allowance,
+Billing, Invoice — and
 the UI renders only canonical entities. The canonical model is defined once, in code, by
 a typed schema both adapters implement; if a provider offers no equivalent for a field,
 the adapter omits it (rendering then follows §6's unavailability rules). One design
@@ -152,6 +153,11 @@ consequence:
 - Every element owns a clean spatial zone — no overlaps, no absolute-stacked content.
 - Destructive actions (rebuild, delete) always confirm in a dialog that names the server
   and states irreversibility in plain text.
+- Anything that spends money (IP add/change, executing a real order, enabling purchases
+  on an account) confirms the same way — typed confirmation, the cost in the provider's
+  own billing unit ("per hour while it exists", "per month", "per purchase"), or
+  "price not published" when the provider doesn't say. A server's primary IP has no
+  change or release control at all.
 
 ## 6. Data Honesty Rules
 
@@ -198,10 +204,12 @@ non-negotiable:
 - **Inputs:** Label above the field, always. Fill Fog Fill, no resting border, 1px
   Charcoal Ink border on focus. Error text below in Down Red with an "Error —" prefix.
   No floating labels.
-- **Credential fields (API tokens):** masked by default (`••••` + last 4), with an
-  explicit reveal toggle that changes its accessible name. Token values never appear in
-  URLs, logs, table cells, dialogs, or screenshots. The credentials page shows provider
-  account, scope, added-date, last-used — never the secret.
+- **Credential fields (API tokens, panel logins):** each adapter declares its own form
+  (one token, or URL + username + password for panels without API tokens). Secret
+  fields are masked by default with an explicit reveal toggle that changes its
+  accessible name. Secret values never appear in URLs, logs, table cells, dialogs, or
+  screenshots. The credentials page shows provider account, the last 4 characters of
+  the token or login name (never of a password), scope, added-date, last-used.
 - **Loaders:** skeleton rows matching the exact table/grid rhythm in Fog Fill with a
   slow shimmer. No circular spinners anywhere.
 - **Empty states:** one composed mark (Geist Mono glyph), one line of explanation, one

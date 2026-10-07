@@ -12,6 +12,7 @@ import IconButton from '@mui/material/IconButton';
 import InputAdornment from '@mui/material/InputAdornment';
 import MenuItem from '@mui/material/MenuItem';
 import Skeleton from '@mui/material/Skeleton';
+import Switch from '@mui/material/Switch';
 import Stack from '@mui/material/Stack';
 import Table from '@mui/material/Table';
 import TableBody from '@mui/material/TableBody';
@@ -22,8 +23,8 @@ import TextField from '@mui/material/TextField';
 import Tooltip from '@mui/material/Tooltip';
 import VisibilityIcon from '@mui/icons-material/Visibility';
 import VisibilityOffIcon from '@mui/icons-material/VisibilityOff';
-import { api, del, fmtRelative, post } from '../api';
-import type { AccountRow, AdapterInfo } from '../types';
+import { api, del, fmtRelative, patch, post } from '../api';
+import type { AccountRow, AdapterInfo, CredentialField } from '../types';
 import { PageHeader } from '../components/PageHeader';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { Toast } from '../components/Toast';
@@ -45,6 +46,7 @@ export function CredentialsView() {
   const [toast, setToast] = useState<ToastMsg>(null);
   const [removeAcct, setRemoveAcct] = useState<AccountRow | null>(null);
   const [busyId, setBusyId] = useState<number | null>(null);
+  const [purchasesAcct, setPurchasesAcct] = useState<AccountRow | null>(null);
 
   if (accounts.isPending) {
     return <Stack spacing={1.5}>
@@ -69,6 +71,23 @@ export function CredentialsView() {
       setToast({ message: `Syncing ${a.name} — results land in the next refresh`, severity: 'info' });
       qc.invalidateQueries({ queryKey: ['accounts'] });
       qc.invalidateQueries({ queryKey: ['fleet'] });
+    } catch (e) {
+      setToast({ message: `${a.name}: ${(e as Error).message}`, severity: 'error' });
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  // turning purchases ON goes through a typed confirm (it lets the panel
+  // spend money at this provider); turning them OFF is immediate
+  const setPurchases = async (a: AccountRow, on: boolean) => {
+    setBusyId(a.id);
+    try {
+      await patch(`/api/accounts/${a.id}`, { purchases_enabled: on });
+      qc.invalidateQueries({ queryKey: ['accounts'] });
+      setToast({ message: on ? `${a.name}: purchases enabled - IP changes and orders now spend money`
+                             : `${a.name}: purchases disabled`, severity: on ? 'info' : 'success' });
+      setPurchasesAcct(null);
     } catch (e) {
       setToast({ message: `${a.name}: ${(e as Error).message}`, severity: 'error' });
     } finally {
@@ -118,6 +137,11 @@ export function CredentialsView() {
               <TableCell>Added</TableCell>
               <TableCell>Last sync</TableCell>
               <TableCell>Status</TableCell>
+              <TableCell>
+                <Tooltip title="Real purchases through this account's provider API: extra IPs, IP changes, server orders. Off by default.">
+                  <span>Purchases</span>
+                </Tooltip>
+              </TableCell>
               {isAdmin && <TableCell align="right">Actions</TableCell>}
             </TableRow>
           </TableHead>
@@ -143,6 +167,15 @@ export function CredentialsView() {
                     : a.enabled
                       ? <Chip size="small" color="success" variant="outlined" label="enabled" />
                       : <Chip size="small" variant="outlined" label="disabled" />}
+                </TableCell>
+                <TableCell>
+                  {isAdmin
+                    ? <Switch size="small" checked={!!a.purchases_enabled}
+                              disabled={busyId === a.id}
+                              slotProps={{ input: { 'aria-label': `Purchases for ${a.name}` } }}
+                              onChange={e => e.target.checked
+                                ? setPurchasesAcct(a) : void setPurchases(a, false)} />
+                    : <span>{a.purchases_enabled ? 'on' : 'off'}</span>}
                 </TableCell>
                 {isAdmin && (
                   <TableCell align="right">
@@ -176,6 +209,18 @@ export function CredentialsView() {
         onClose={() => setRemoveAcct(null)}
       />
 
+      <ConfirmDialog
+        open={!!purchasesAcct}
+        title="Enable purchases"
+        serverName={purchasesAcct?.name ?? ''}
+        body={`Let the panel spend money through ${purchasesAcct?.name}: buying and changing IPs (including calls from IP-change API tokens) and placing server orders. Each purchase is recorded under Orders. The daily IP cap in Settings still applies.`}
+        confirmLabel="Enable purchases"
+        requireTyped
+        confirming={busyId === purchasesAcct?.id}
+        onConfirm={() => { if (purchasesAcct) void setPurchases(purchasesAcct, true); }}
+        onClose={() => setPurchasesAcct(null)}
+      />
+
       {addOpen && (
         <AddAccountDialog
           adapters={adapters}
@@ -202,11 +247,22 @@ function AddAccountDialog({ adapters, onClose, onDone }: {
   // offers exactly these; the default must be one of them, never a blank select
   const credList = list.filter(a => !a.source);
   const effAdapter = adapter || credList[0]?.key || '';
+  // the adapter's own form: one "token" field, or several (a username +
+  // password panel). Values are keyed per adapter so switching providers
+  // never carries one provider's secret into another's form.
+  const [values, setValues] = useState<Record<string, string>>({});
+  const fields = credList.find(a => a.key === effAdapter)?.credential_fields ?? [];
+  const multi = fields.length > 1 || (fields.length === 1 && fields[0].name !== 'token');
+  const fieldValue = (f: CredentialField) => values[`${effAdapter}:${f.name}`] ?? f.default ?? '';
+  const missing = multi ? fields.some(f => !fieldValue(f).trim()) : !token.trim();
 
   const submit = async () => {
     setBusy(true); setError(null);
     try {
-      await post('/api/accounts', { adapter: effAdapter, name: name.trim(), token: token.trim() });
+      await post('/api/accounts', multi
+        ? { adapter: effAdapter, name: name.trim(),
+            fields: Object.fromEntries(fields.map(f => [f.name, fieldValue(f)])) }
+        : { adapter: effAdapter, name: name.trim(), token: token.trim() });
       onDone();
     } catch (e) {
       setError((e as Error).message);
@@ -255,10 +311,53 @@ function AddAccountDialog({ adapters, onClose, onDone }: {
               features), then paste it here.
             </Alert>
           )}
+          {effAdapter === 'netlen' && (
+            <Alert severity="info" icon={false}>
+              Create an API key in the Netlen panel (API section) and add this
+              panel's outgoing IP to the key's IP allowlist - Netlen refuses
+              every call from any other address.
+            </Alert>
+          )}
+          {effAdapter === 'tube' && (
+            <Alert severity="info" icon={false}>
+              Your tube-hosting.com login. Their API has no tokens; the panel
+              signs in with e-mail + password (stored encrypted).
+            </Alert>
+          )}
+          {effAdapter === 'lightnode' && (
+            <Alert severity="info" icon={false}>
+              Request an API token in the LightNode console (Account → Token
+              list); LightNode issues it after review.
+            </Alert>
+          )}
+          {effAdapter === 'gcore_hosting' && (
+            <Alert severity="info" icon={false}>
+              Your hosting.gcore.com panel login. The hosting panel
+              (BILLmanager) has no API tokens, so the panel signs in with
+              your username and password - stored encrypted, sent only to
+              the panel URL over HTTPS.
+            </Alert>
+          )}
           <TextField label="Account name" value={name}
                      onChange={e => setName(e.target.value)} size="small" required
                      helperText="A label, e.g. main or edge" />
-          <TextField label="API token" type={showToken ? 'text' : 'password'} value={token}
+          {multi && fields.map(f => (
+            <TextField key={`${effAdapter}:${f.name}`} label={f.label} size="small" required
+                       type={f.secret && !showToken ? 'password' : 'text'}
+                       value={fieldValue(f)}
+                       onChange={e => setValues(v => ({ ...v, [`${effAdapter}:${f.name}`]: e.target.value }))}
+                       helperText={f.help ?? (f.secret ? 'Stored encrypted, never shown again.' : undefined)}
+                       slotProps={f.secret ? { input: { endAdornment: (
+                         <InputAdornment position="end">
+                           <IconButton size="small" edge="end"
+                                       aria-label={showToken ? `Hide ${f.label}` : `Show ${f.label}`}
+                                       onClick={() => setShowToken(s => !s)}>
+                             {showToken ? <VisibilityOffIcon fontSize="small" /> : <VisibilityIcon fontSize="small" />}
+                           </IconButton>
+                         </InputAdornment>
+                       ) } } : undefined} />
+          ))}
+          {!multi && <TextField label="API token" type={showToken ? 'text' : 'password'} value={token}
                      onChange={e => setToken(e.target.value)} size="small" required
                      helperText="Stored encrypted. Only the last 4 characters are ever shown."
                      slotProps={{ input: { endAdornment: (
@@ -269,14 +368,14 @@ function AddAccountDialog({ adapters, onClose, onDone }: {
                            {showToken ? <VisibilityOffIcon fontSize="small" /> : <VisibilityIcon fontSize="small" />}
                          </IconButton>
                        </InputAdornment>
-                     ) } }} />
+                     ) } }} />}
           {error && <Alert severity="error">{error}</Alert>}
         </Stack>
       </DialogContent>
       <DialogActions>
         <Button onClick={onClose} disabled={busy}>Cancel</Button>
         <Button variant="contained"
-                disabled={busy || !effAdapter || !name.trim() || !token.trim() || adapters.isPending}
+                disabled={busy || !effAdapter || !name.trim() || missing || adapters.isPending}
                 onClick={submit}>{busy ? 'Adding…' : 'Add'}</Button>
       </DialogActions>
     </Dialog>

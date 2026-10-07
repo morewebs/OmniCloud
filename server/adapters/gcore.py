@@ -31,6 +31,16 @@ Fleet adapter - all facts verified against the official OpenAPI 3.1 spec
 - Price: GET /cloud/v1/pricing/{p}/{r}/instances/{id} -> price_per_hour,
   price_per_month (discounted), price_without_discount_per_month,
   discount_percent, tax_percent, currency_code.
+- Extra public IPs = reserved fixed IPs (type "external"): POST
+  /cloud/v1/reserved_fixed_ips/{p}/{r} -> tasks (the task's
+  created_resources names the new port), GET .../{port_id} ->
+  fixed_ip_address; attach with POST /cloud/v1/instances/{p}/{r}/{id}/
+  attach_interface {"type": "reserved_fixed_ip", "port_id"}; detach with
+  .../detach_interface {"ip_address", "port_id"}; DELETE
+  /cloud/v1/reserved_fixed_ips/{p}/{r}/{port_id} releases it. Billed per
+  minute from creation to deletion, attached or not (docs.gcore.com cloud
+  billing + reserved-IP pages) - so a reserved IP that failed to attach is
+  deleted at once, never left billing.
 - No VM rebuild endpoint in the spec (bare metal only) -> REBUILD not
   offered. Traffic: free and unmetered (ingress AND egress) per docs - see
   UNMETERED_NOTE below; no byte usage exists to fetch.
@@ -51,6 +61,7 @@ billing = prepaid PAYG wallet charged per minute (~4 USD deduction steps).
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import time
 from decimal import Decimal
 from typing import Any
@@ -59,8 +70,9 @@ import httpx
 
 from . import http as phttp
 from .base import (
-    ActionTimeout, ActionResult, AdapterError, Allowance, Capability, Facet,
-    IpOffer, Money, Plan, ProviderAdapter, Server, ServerStatus, parse_dt,
+    ActionTimeout, ActionResult, AdapterError, Allowance, Billing, Capability, Facet,
+    IpAddress, IpCost, IpOffer, Money, Plan, ProviderAdapter, Server,
+    ServerStatus, parse_dt,
 )
 
 API = "https://api.gcore.com"
@@ -123,7 +135,27 @@ CAPABILITIES = frozenset({
     Capability.POWER_ON, Capability.POWER_OFF, Capability.REBOOT,
     Capability.SHUTDOWN, Capability.RENAME, Capability.RELABEL,
     Capability.DELETE,
+    Capability.IP_ADD, Capability.IP_RELEASE, Capability.IP_CHANGE,
 })
+
+RESERVED_IP_NOTE = ("billed per minute from creation to deletion, attached or "
+                    "not - a change costs only the minutes each IP existed")
+
+
+# Not reachable from the internet: RFC 1918, CGNAT, loopback, link-local,
+# IPv6 ULA/link-local. Everything else on an instance is a public address
+# (documentation ranges included - they are what fixtures use).
+_NON_PUBLIC = tuple(ipaddress.ip_network(n) for n in (
+    "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10",
+    "127.0.0.0/8", "169.254.0.0/16", "fc00::/7", "fe80::/10", "::1/128"))
+
+
+def _is_public(addr: str | None) -> bool:
+    try:
+        ip = ipaddress.ip_address(addr or "")
+    except ValueError:
+        return False
+    return not any(ip in n for n in _NON_PUBLIC if n.version == ip.version)
 
 
 class GcoreAdapter(ProviderAdapter):
@@ -163,7 +195,8 @@ class GcoreAdapter(ProviderAdapter):
         pid, region, iid = self._split_id(provider_id)
         row = await self.h.get_json(
             f"/cloud/v1/instances/{pid}/{region}/{iid}")
-        return await self._server(row, pid, region)
+        return await self._server(row, pid, region,
+                                  await self._reserved_addresses(pid, region))
 
     async def _regions(self) -> list[str]:
         """All region ids (public endpoint, no project scope needed)."""
@@ -195,17 +228,52 @@ class GcoreAdapter(ProviderAdapter):
             offset += 100
             if len(rows) >= count or not data.get("results"):
                 break
+        reserved = await self._reserved_addresses(pid, region) if rows else set()
         # per-instance pricing GETs are independent - concurrent, not N
         # sequential round trips (each is its own HTTP call)
         return list(await asyncio.gather(
-            *[self._server(row, pid, region) for row in rows]))
+            *[self._server(row, pid, region, reserved) for row in rows]))
 
-    async def _server(self, row: dict, pid: Any, region: str) -> Server:
+    async def _reserved_list(self, pid: Any, region: str) -> list[dict]:
+        data = await self.h.get_json(f"/cloud/v1/reserved_fixed_ips/{pid}/{region}")
+        return data.get("results", []) if isinstance(data, dict) else data
+
+    async def _reserved_addresses(self, pid: Any, region: str) -> set[str]:
+        """Addresses that are reserved IPs (the swappable kind). One call per
+        project x region with instances; unreadable -> empty (every IP then
+        reads primary: protected, never wrongly released)."""
+        try:
+            return {r.get("fixed_ip_address") for r in await self._reserved_list(pid, region)
+                    if r.get("fixed_ip_address")}
+        except AdapterError:
+            return set()
+
+    @staticmethod
+    def _ips(row: dict, reserved: set[str]) -> list[IpAddress]:
+        """Public addresses from the instance's addresses map. Reserved IPs
+        are the swappable extras; any other public address (the VM's own
+        external interface, or its floating IP) is primary."""
+        out: list[IpAddress] = []
+        for entries in (row.get("addresses") or {}).values():
+            for a in entries or []:
+                addr = a.get("addr")
+                if not _is_public(addr) or any(ip.address == addr for ip in out):
+                    continue
+                is_reserved = addr in reserved
+                out.append(IpAddress(
+                    address=addr, version=6 if ":" in addr else 4,
+                    primary=not is_reserved,
+                    kind="reserved" if is_reserved else (a.get("type") or "fixed")))
+        return out
+
+    async def _server(self, row: dict, pid: Any, region: str,
+                      reserved: set[str] | None = None) -> Server:
         iid = str(row.get("id"))
         flavor = row.get("flavor") or {}
         fname = flavor.get("flavor_name") or flavor.get("flavor_id")
 
         price = await self._price_for(pid, region, iid)
+        ips = self._ips(row, reserved or set())
 
         facets = []
         if fname:
@@ -229,7 +297,8 @@ class GcoreAdapter(ProviderAdapter):
             account_id=self.account_id,
             status=STATE_MAP.get(str(row.get("status", "")).upper(),
                                  ServerStatus.UNKNOWN),
-            ipv4=self._ipv4(row),
+            ipv4=self._ipv4(row) or next((i.address for i in ips
+                                          if i.primary and i.version == 4), None),
             # the serializer carries the provider's own region display name
             # (row.region, e.g. "Frankfurt"); the path id stays in provider_id
             region=row.get("region") or str(region),
@@ -243,17 +312,17 @@ class GcoreAdapter(ProviderAdapter):
                 window=UNMETERED_NOTE,
             ),
             facets=facets,
+            ips=ips,
             # Gcore exposes name, addresses, tags, created_at, flavor and
             # price - nothing on the Server model is genuinely missing.
         )
 
     @staticmethod
     def _ipv4(row: dict) -> str | None:
-        """Public IPv4: the type:"floating" address in the addresses map. A
-        fixed addr on an external network is public too, but the addresses
-        map cannot tell external from internal networks - and returning a
-        private fixed addr (10.x/172.16.x/192.168.x) as the server's public
-        IP would be a lie. So: floating wins; otherwise no honest value."""
+        """Public IPv4: the type:"floating" address in the addresses map
+        wins. Without one, list_servers falls back to the primary entry of
+        _ips: a fixed addr outside the private ranges (the VM's own external
+        interface). A private fixed addr is never reported as public."""
         for entries in (row.get("addresses") or {}).values():
             for a in entries or []:
                 addr = a.get("addr")
@@ -368,15 +437,17 @@ class GcoreAdapter(ProviderAdapter):
         raise ActionTimeout(
             f"gcore {cap.value} on {server_id} (last status {last})")
 
-    async def _poll_tasks(self, task_ids: list[str]) -> None:
+    async def _poll_tasks(self, task_ids: list[str]) -> list[dict]:
         """All tasks to FINISHED; ERROR carries an error string (a real
-        failure, never success)."""
+        failure, never success). Returns the finished task bodies."""
+        done = []
         for tid in task_ids:
             deadline = time.monotonic() + POLL_BUDGET_S
             while time.monotonic() < deadline:
                 t = await self.h.get_json(f"/cloud/v1/tasks/{tid}")
                 state = str(t.get("state", "")).upper()
                 if state == "FINISHED":
+                    done.append(t)
                     break
                 if state == "ERROR":
                     raise AdapterError(
@@ -384,6 +455,120 @@ class GcoreAdapter(ProviderAdapter):
                 await asyncio.sleep(POLL_INTERVAL_S)
             else:
                 raise ActionTimeout(f"gcore task {tid} did not finish")
+        return done
+
+    # -- IPs: reserved public IPs are the swappable extras ------------------
+
+    async def _tasks_of(self, r) -> list[dict]:
+        if r.status_code >= 400:
+            raise AdapterError(f"{r.request.method} {r.request.url.path}: {r.status_code} - "
+                               f"{r.text[:200]}", status_code=r.status_code)
+        return await self._poll_tasks(r.json().get("tasks", []))
+
+    async def add_ip(self, server_id: str) -> IpAddress:
+        pid, region, iid = self._split_id(server_id)
+        # 1) reserve: sent once - this is the purchase
+        r = await self.h.request("POST", f"/cloud/v1/reserved_fixed_ips/{pid}/{region}",
+                                 json={"type": "external", "ip_family": "ipv4",
+                                       "is_vip": False}, retry=False)
+        tasks = await self._tasks_of(r)
+        port = next((p for t in tasks
+                     for key in ("ports", "reserved_fixed_ips")
+                     for p in (t.get("created_resources") or {}).get(key) or []), None)
+        if not port:
+            raise AdapterError("gcore reserved the IP but the task named no port - "
+                               "check Reserved IPs in the portal (it bills per minute)")
+        try:
+            res = await self.h.get_json(f"/cloud/v1/reserved_fixed_ips/{pid}/{region}/{port}")
+            addr = res.get("fixed_ip_address")
+            if not addr:
+                raise AdapterError(f"reserved port {port} has no address")
+            # 2) attach to the VM
+            r = await self.h.request(
+                "POST", f"/cloud/v1/instances/{pid}/{region}/{iid}/attach_interface",
+                json={"type": "reserved_fixed_ip", "port_id": port}, retry=False)
+            await self._tasks_of(r)
+            # 3) confirm on the instance's own address map
+            await self._await_address(pid, region, iid, addr, present=True)
+        except AdapterError as e:
+            # an unattached reserved IP bills per minute: give it back now
+            try:
+                await self._delete_reserved(pid, region, port)
+            except AdapterError as cleanup:
+                raise AdapterError(f"{e}; the reserved IP (port {port}) could NOT be "
+                                   f"deleted ({cleanup}) - delete it in the portal")
+            raise
+        return IpAddress(address=addr, primary=False, kind="reserved", provider_ip_id=port)
+
+    async def release_ip(self, server_id: str, address: str) -> None:
+        pid, region, iid = self._split_id(server_id)
+        entry = next((x for x in await self._reserved_list(pid, region)
+                      if x.get("fixed_ip_address") == address), None)
+        if entry is None:
+            raise AdapterError(f"{address} is not a reserved IP - the VM's own address "
+                               "is never released here")
+        port = entry.get("port_id")
+        row = await self.h.get_json(f"/cloud/v1/instances/{pid}/{region}/{iid}")
+        if address in {a.get("addr") for es in (row.get("addresses") or {}).values()
+                       for a in es or []}:
+            r = await self.h.request(
+                "POST", f"/cloud/v1/instances/{pid}/{region}/{iid}/detach_interface",
+                json={"ip_address": address, "port_id": port})
+            await self._tasks_of(r)
+            await self._await_address(pid, region, iid, address, present=False)
+        await self._delete_reserved(pid, region, port)
+
+    async def _delete_reserved(self, pid: Any, region: str, port: str) -> None:
+        r = await self.h.request("DELETE", f"/cloud/v1/reserved_fixed_ips/{pid}/{region}/{port}")
+        if r.status_code == 404:
+            return
+        await self._tasks_of(r)
+        r = await self.h.request("GET", f"/cloud/v1/reserved_fixed_ips/{pid}/{region}/{port}")
+        if r.status_code != 404:
+            raise AdapterError(f"reserved IP port {port} still exists after delete")
+
+    async def _await_address(self, pid: Any, region: str, iid: str, addr: str,
+                             present: bool) -> None:
+        deadline = time.monotonic() + POLL_BUDGET_S
+        while True:
+            row = await self.h.get_json(f"/cloud/v1/instances/{pid}/{region}/{iid}")
+            seen = addr in {a.get("addr") for es in (row.get("addresses") or {}).values()
+                            for a in es or []}
+            if seen == present:
+                return
+            if time.monotonic() >= deadline:
+                raise ActionTimeout(f"{addr} {'attach' if present else 'detach'} on {iid}")
+            await asyncio.sleep(POLL_INTERVAL_S)
+
+    async def ip_cost(self, server_id: str) -> IpCost:
+        pid, region, _ = self._split_id(server_id)
+        try:
+            r = await self.h.request("POST", f"/cloud/v1/pricing/{pid}/{region}/reserved_fixed_ips",
+                                     json={"type": "external", "ip_family": "ipv4"})
+            data = r.json() if r.status_code < 400 else {}
+        except (AdapterError, ValueError):
+            data = {}
+        cur = data.get("currency_code") or "USD"
+        if data.get("price_per_hour") is not None:
+            return IpCost(price=Money(amount=Decimal(str(data["price_per_hour"])), currency=cur),
+                          per="hour", note=RESERVED_IP_NOTE)
+        # the catalog's verified uniform public-IP price (externalip_min)
+        return IpCost(price=Money(amount=PUBLIC_IP_MONTHLY_USD, currency="USD"),
+                      per="month", note=RESERVED_IP_NOTE)
+
+    async def list_images(self) -> list[dict]:
+        # the order dialog asks every live fleet adapter for images; Gcore
+        # server ordering isn't wired (no provision) - an honest empty list
+        # instead of the AttributeError -> 500 /api/catalog/images used to hit
+        return []
+
+    async def get_billing(self) -> Billing:
+        # the Cloud API has no balance or invoice endpoint (cost reports
+        # only, response shape unverified) - say so, invent nothing
+        return Billing(model="prepaid pay-as-you-go wallet, charged per minute "
+                             "in ~4 EUR/USD deduction steps",
+                       not_exposed=["balance", "invoices", "month_to_date",
+                                    "upcoming", "renewals"])
 
     @staticmethod
     def _split_id(provider_id: str) -> tuple[str, str, str]:

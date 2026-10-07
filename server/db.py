@@ -1,7 +1,9 @@
 """SQLite via stdlib sqlite3. One fresh connection per operation, WAL, short transactions.
 
-ponytail: no migrations - CREATE TABLE IF NOT EXISTS + schema_version row; real
-migration tool only when a schema change actually ships (v2).
+CREATE TABLE IF NOT EXISTS + a schema_version row. Fresh databases get the
+current schema straight from SCHEMA; older ones are brought forward by
+_migrate() - additive ALTERs, plus one table rebuild where SQLite can't
+alter a CHECK constraint. No migration framework until one is needed.
 """
 import sqlite3
 from contextlib import AbstractContextManager, closing, contextmanager
@@ -9,7 +11,7 @@ from datetime import datetime, timezone
 
 from . import config
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS users (
@@ -31,6 +33,8 @@ CREATE TABLE IF NOT EXISTS accounts (
     adapter TEXT NOT NULL,
     name TEXT NOT NULL,
     enabled INTEGER NOT NULL DEFAULT 1,
+    -- real purchases (IPs, servers) are opt-in per account, off by default
+    purchases_enabled INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS credentials (
@@ -65,6 +69,7 @@ CREATE TABLE IF NOT EXISTS actions (
     requested_by INTEGER NOT NULL REFERENCES users(id),
     status TEXT NOT NULL CHECK(status IN ('in_progress','done','failed')),
     detail TEXT,
+    result TEXT,  -- JSON outcome for API callers (e.g. an IP change's new address)
     created_at TEXT NOT NULL,
     completed_at TEXT
 );
@@ -108,7 +113,9 @@ CREATE TABLE IF NOT EXISTS orders (
     id INTEGER PRIMARY KEY,
     mode TEXT NOT NULL CHECK(mode IN ('prototype','real')),
     status TEXT NOT NULL CHECK(status IN
-        ('draft','confirmed','executing','provisioned','failed','cancelled')),
+        ('draft','confirmed','executing','awaiting_payment','provisioned',
+         'failed','cancelled')),
+    kind TEXT NOT NULL DEFAULT 'server' CHECK(kind IN ('server','ip')),
     adapter TEXT NOT NULL,
     account_id INTEGER REFERENCES accounts(id),
     plan_name TEXT NOT NULL,
@@ -117,6 +124,9 @@ CREATE TABLE IF NOT EXISTS orders (
     plan_snapshot TEXT NOT NULL,
     estimated_monthly TEXT NOT NULL,
     resulting_provider_id TEXT,
+    target_provider_id TEXT,  -- kind=ip: the server the IP is for
+    provider_ref TEXT,        -- provider's own order/payment id
+    pay_url TEXT,             -- where a human pays an awaiting_payment order
     requested_by INTEGER NOT NULL REFERENCES users(id),
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
@@ -133,10 +143,18 @@ CREATE TABLE IF NOT EXISTS api_tokens (
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     name TEXT NOT NULL,
     token_hash TEXT NOT NULL UNIQUE,
+    -- 'full' = the owner's role; 'ip_change' = only the IP-change API
+    scope TEXT NOT NULL DEFAULT 'full',
     created_at TEXT NOT NULL,
     last_used_at TEXT
 );
-INSERT OR IGNORE INTO settings(key, value) VALUES ('schema_version', '3');
+CREATE TABLE IF NOT EXISTS billing_snapshots (
+    account_id INTEGER PRIMARY KEY REFERENCES accounts(id) ON DELETE CASCADE,
+    canonical TEXT,
+    fetched_at TEXT,
+    last_error TEXT
+);
+INSERT OR IGNORE INTO settings(key, value) VALUES ('schema_version', '4');
 """
 
 
@@ -174,6 +192,57 @@ def init() -> None:
             raise RuntimeError(
                 f"Database schema v{row[0]} is newer than this build (v{SCHEMA_VERSION})."
             )
+        version = int(row[0]) if row else SCHEMA_VERSION
+    if version < 4:
+        _migrate_v4()
+
+
+# v3 -> v4 additive columns: (table, column, DDL)
+_V4_COLUMNS = (
+    ("accounts", "purchases_enabled", "INTEGER NOT NULL DEFAULT 0"),
+    ("actions", "result", "TEXT"),
+    ("api_tokens", "scope", "TEXT NOT NULL DEFAULT 'full'"),
+)
+
+_ORDERS_V4_COLUMNS = ("id, mode, status, adapter, account_id, plan_name, location, options, "
+                      "plan_snapshot, estimated_monthly, resulting_provider_id, "
+                      "requested_by, created_at, updated_at")
+
+
+def _migrate_v4() -> None:
+    """IP management, billing snapshots, real purchases, scoped tokens.
+    orders needs a rebuild: its status CHECK gains 'awaiting_payment', and
+    SQLite can't alter a CHECK in place."""
+    with closing(sqlite3.connect(config.DB_PATH, timeout=10, isolation_level=None)) as conn:
+        # foreign keys OFF for the rebuild: dropping the old orders table
+        # with them ON would cascade-delete every order_events row
+        conn.execute("PRAGMA foreign_keys=OFF")
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            for table, col, ddl in _V4_COLUMNS:
+                cols = {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
+                if col not in cols:
+                    conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {ddl}")
+            orders_sql = conn.execute(
+                "SELECT sql FROM sqlite_master WHERE type='table' AND name='orders'"
+            ).fetchone()[0]
+            if "awaiting_payment" not in orders_sql:
+                start = SCHEMA.index("CREATE TABLE IF NOT EXISTS orders (")
+                end = SCHEMA.index(");", start) + 2
+                conn.execute(SCHEMA[start:end].replace(
+                    "CREATE TABLE IF NOT EXISTS orders (", "CREATE TABLE orders_v4 ("))
+                conn.execute(f"INSERT INTO orders_v4({_ORDERS_V4_COLUMNS}) "
+                             f"SELECT {_ORDERS_V4_COLUMNS} FROM orders")
+                conn.execute("DROP TABLE orders")
+                conn.execute("ALTER TABLE orders_v4 RENAME TO orders")
+            conn.execute("UPDATE settings SET value='4' WHERE key='schema_version'")
+            conn.execute("COMMIT")
+        except BaseException:
+            conn.execute("ROLLBACK")
+            raise
+        bad = conn.execute("PRAGMA foreign_key_check").fetchall()
+        if bad:
+            raise RuntimeError(f"v4 migration left dangling foreign keys: {bad[:5]}")
 
 
 def get_setting(key: str, default: str | None = None) -> str | None:

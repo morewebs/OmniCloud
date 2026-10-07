@@ -66,7 +66,7 @@ export function CatalogView() {
   const rows = useMemo(() => allPlans.filter(p => {
     if (adapterF !== 'all' && p.adapter !== adapterF) return false;
     if (locF !== 'all' && p.location !== locF) return false;
-    if (ipOnly && !p.extra_ip) return false;
+    if (ipOnly && (!p.extra_ip || p.extra_ip.limit === 0)) return false;
     // NaN from free-text ("abc", "12,5") would make every comparison false and
     // silently pass ALL rows - guard with isFinite
     const maxN = Number(maxPrice);
@@ -221,7 +221,11 @@ export function CatalogView() {
                             : <Box component="span" sx={{ color: 'text.secondary'  }}>per account / not published</Box>}
                       </TableCell>
                       <TableCell>
-                        {p.extra_ip
+                        {p.extra_ip && p.extra_ip.limit === 0
+                          ? <Tooltip title={p.extra_ip.note ?? ''}>
+                              <span style={{ opacity: 0.7 }}>not offered</span>
+                            </Tooltip>
+                          : p.extra_ip
                           ? (p.extra_ip.price
                               ? `+${p.extra_ip.price.currency} ${p.extra_ip.price.amount}/mo each`
                               : <Tooltip title={p.extra_ip.note ?? 'price not published'}>
@@ -296,7 +300,7 @@ function CompareDialog({ plans, onClose }: { plans: Plan[]; onClose: () => void 
               ['Cores', (p: Plan) => p.cpu_cores ?? '—'],
               ['RAM', (p: Plan) => p.ram_gb ? `${p.ram_gb} GB` : '—'],
               ['Disk', (p: Plan) => p.disk_gb ? `${p.disk_gb} GB` : '—'],
-              ['Extra IPs', (p: Plan) => p.extra_ip
+              ['Extra IPs', (p: Plan) => p.extra_ip?.limit === 0 ? 'not offered' : p.extra_ip
                 ? (p.extra_ip.price ? `offered · ${p.extra_ip.price.amount}/mo` : 'offered · price on request')
                 : '—'],
               ['Billing', (p: Plan) => p.billing_model || '—'],

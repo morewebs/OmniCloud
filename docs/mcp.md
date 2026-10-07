@@ -47,6 +47,9 @@ The Vite dev server (`:5173`) proxies `/mcp` to it as well.
 
 - **Credential:** only personal API tokens are accepted. A browser session
   cookie is not, so the endpoint has no CSRF surface.
+- **Scope:** only `full`-scope tokens. An `ip_change` token (Settings →
+  API tokens → IP change only) is refused like an unknown one - it is meant
+  for a rotation script calling the REST IP-change API, nothing else.
 - **No token, or an unknown, revoked or disabled one:** HTTP `401` with
   `{"detail": "Not signed in"}` and `WWW-Authenticate: Bearer`. This happens
   before any MCP message is handled, so the caller can't even list tools.
@@ -93,7 +96,7 @@ The Vite dev server (`:5173`) proxies `/mcp` to it as well.
   - Destructive tools need the human's explicit confirmation first.
 - **Tool hints.** Tools carry MCP annotations: `readOnlyHint` on reads, and
   `destructiveHint` on `rebuild_server`, `delete_server`, `delete_account`,
-  `apply_update` and `revoke_api_token`.
+  `release_ip`, `apply_update` and `revoke_api_token`.
 
 ## Tools
 
@@ -118,6 +121,8 @@ optional.
 | `get_server` | viewer | `account_id`, `provider_id` | One server: facets, allowance, labels, firewalls, daily traffic history |
 | `list_allowances` | viewer | | Traffic used / included, counting rule, window, projected overage |
 | `get_billing_summary` | viewer | | Base spend and overage per (adapter, currency) |
+| `get_account_billing` | viewer | | Per account: billing model, balance, invoices (due date, open amount), unpaid orders with pay links, renewals |
+| `refresh_account_billing` | admin | `account_id` | Re-read one account's billing from the provider now |
 | `sync_account` | viewer | `account_id` | Wake the account's sync loop now (409 if the account is disabled) |
 
 ### Server actions
@@ -135,6 +140,18 @@ optional.
 Only the kinds an adapter supports work. `list_adapters` shows each adapter's
 capabilities, and an unsupported kind returns `409`.
 
+### IPs
+
+| Tool | Role | Arguments | What it does |
+|---|---|---|---|
+| `describe_ip` | viewer | `address` | Owning server/account, primary or swappable, cost of one change, 24 h acquisitions vs cap |
+| `change_ip` | admin | `address`, `release_first?` | **Spends money:** swap a swappable IP for a fresh one; returns the new address (or `awaiting_payment` + `pay_url`) |
+| `add_ip` | admin | `account_id`, `provider_id` | **Spends money:** buy one more IPv4 for a server |
+| `release_ip` | admin | `account_id`, `provider_id`, `address` | **Irreversible:** give a swappable IP back. The primary IP is refused |
+
+All of them need purchases enabled on the account (`update_account`), count
+toward its daily cap, and follow [ip-change.md](ip-change.md).
+
 ### Firewalls
 
 | Tool | Role | Arguments | What it does |
@@ -150,8 +167,8 @@ capabilities, and an unsupported kind returns `409`.
 |---|---|---|---|
 | `list_accounts` | viewer | | Accounts with credential scope, last 4 characters, sync status |
 | `list_adapters` | viewer | | Fleet adapters with capabilities, plus catalog-only providers |
-| `create_account` | admin | `adapter`, `name`, `token`, `scope?` | Connect an account. It starts syncing immediately |
-| `update_account` | admin | `account_id`, `name?`, `enabled?` | Rename, or enable/disable sync |
+| `create_account` | admin | `adapter`, `name`, `token?`, `fields?`, `scope?` | Connect an account. `token` for single-token adapters, `fields` for multi-field ones (see `credential_fields` in `list_adapters`). It starts syncing immediately |
+| `update_account` | admin | `account_id`, `name?`, `enabled?`, `purchases_enabled?` | Rename, enable/disable sync, or switch real purchases on/off |
 | `delete_account` | admin | `account_id` | **Irreversible:** remove the account, its credential and cached servers (servers at the provider are untouched) |
 
 `create_account` sends the provider credential through the agent's context.
@@ -167,10 +184,10 @@ entering credentials in the web UI keeps them out of the conversation.
 | `sync_catalog` | admin | | Refresh every provider's plans now |
 | `list_orders` | viewer | | Orders with status and estimate |
 | `get_order` | viewer | `order_id` | One order with its status history |
-| `create_order` | admin | `adapter`, `plan_name`, `location`, `options?` | Draft an order. `options`: `hostname`, `extra_ips`, `image` |
+| `create_order` | admin | `adapter`, `plan_name`, `location`, `options?` | Draft an order. `options`: `hostname`, `extra_ips`, `image`, `account_id` (an account with purchases on makes it `real`) |
 | `confirm_order` | admin | `order_id` | draft → confirmed |
 | `cancel_order` | admin | `order_id` | Cancel a draft or confirmed order |
-| `execute_order` | admin | `order_id` | confirmed → executing |
+| `execute_order` | admin | `order_id` | confirmed → executing. A `real` order buys at the provider and may end `awaiting_payment` |
 
 ### Users, tokens, settings, audit
 
@@ -180,10 +197,10 @@ entering credentials in the web UI keeps them out of the conversation.
 | `create_user` | admin | `username`, `password`, `role?` | New user (viewer by default) |
 | `update_user` | admin | `user_id`, `role?`, `disabled?`, `password?` | Change role, disable, reset password (signs the user out) |
 | `list_api_tokens` | viewer | | Your own tokens (no plaintext) |
-| `create_api_token` | viewer | `name` | New token for yourself. The plaintext appears in this result once |
+| `create_api_token` | viewer | `name`, `scope?` | New token for yourself (`full` or `ip_change`). The plaintext appears in this result once |
 | `revoke_api_token` | viewer | `token_id` | Revoke one of your own tokens |
-| `get_settings` | admin | | `sync_*` and `update_*` settings |
-| `update_settings` | admin | `settings` | Write settings (keys must start with `sync_` or `update_`) |
+| `get_settings` | admin | | `sync_*`, `update_*`, `ip_*` and `billing_*` settings |
+| `update_settings` | admin | `settings` | Write settings (keys must start with `sync_`, `update_`, `ip_` or `billing_`) |
 | `list_audit_log` | admin | | The 200 most recent mutations, with before/after state |
 
 ### Prompts

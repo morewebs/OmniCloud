@@ -112,5 +112,8 @@ async def test_seeds_carry_traffic_notes_not_numbers():
     assert light_plans[0].included_traffic_bytes == 1_000_000_000_000  # 1 TB
     # Start tier: IPs not offered as an add-on - the offer says so honestly
     # (kind + note), never a fabricated price.
-    ip = light_plans[0].extra_ip
-    assert ip is not None and ip.price is None and "not offered" in (ip.note or "")
+    # every plan says the same thing: 1 IPv4 included, none extra (limit 0)
+    for p in light_plans:
+        ip = p.extra_ip
+        assert ip is not None and ip.price is None and ip.limit == 0
+        assert "not offered" in (ip.note or "")

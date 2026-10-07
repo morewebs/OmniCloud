@@ -162,22 +162,25 @@ def test_adapters_lists_fleet_and_catalog_providers(client):
     # fleet adapters (incl. the registered real ones) carry capabilities and
     # no catalog source
     fleet = {a["key"] for a in rows if not a.get("source")}
-    assert fleet == {"fake", "hetzner", "leaseweb", "ovh", "gcore", "gcore_hosting"}
+    assert fleet == {"fake", "hetzner", "leaseweb", "ovh", "gcore", "gcore_hosting",
+                     "netlen", "tube", "lightnode"}
     assert row_by_key["ovh"]["capabilities"], "ovh is a full fleet adapter"
     assert row_by_key["gcore"]["capabilities"], "gcore is a full fleet adapter"
     assert "ip_change" in row_by_key["gcore_hosting"]["capabilities"]
     # the hosting panel signs in with username + password, not a token
     assert [f["name"] for f in row_by_key["gcore_hosting"]["credential_fields"]] == \
         ["url", "username", "password"]
-    # catalog-only providers carry their honest source label
-    for key in ("tube",):
-        assert row_by_key[key]["source"] == "live"
-    for key in ("netlen", "lightnode"):
-        assert row_by_key[key]["source"] == "seeded"
-    # no credential can be created for a catalog-only provider (gcore is now
-    # a full fleet adapter - tube remains catalog-only)
+    # every catalog provider now also has a fleet adapter: one row each
+    # (the fleet row wins; catalog sources live on /api/catalog/providers)
+    assert all(not a.get("source") for a in rows)
+    # tube signs in with e-mail + password: a bare token is refused
+    assert [f["name"] for f in row_by_key["tube"]["credential_fields"]] == ["mail", "password"]
     r = client.post("/api/accounts", headers=HDRS,
                     json={"adapter": "tube", "name": "x", "token": TEST_TOKEN})
+    assert r.status_code == 400 and "e-mail" in r.json()["detail"]
+    # an unknown provider is refused outright
+    r = client.post("/api/accounts", headers=HDRS,
+                    json={"adapter": "nope", "name": "x", "token": TEST_TOKEN})
     assert r.status_code == 400
 
 

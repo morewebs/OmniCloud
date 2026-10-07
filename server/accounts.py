@@ -9,7 +9,10 @@ from .adapters.gcore import GcoreAdapter
 from .adapters.gcore_hosting import GcoreHostingAdapter
 from .adapters.hetzner import HetznerAdapter
 from .adapters.leaseweb import LeasewebAdapter
+from .adapters.lightnode import LightNodeAdapter
+from .adapters.netlen import NetlenAdapter
 from .adapters.ovh import OvhAdapter
+from .adapters.tube import TubeAdapter
 
 # Registry: adapters that ship. Roadmap adapters slot in here only.
 ADAPTERS: dict[str, type[ProviderAdapter]] = {
@@ -18,6 +21,9 @@ ADAPTERS: dict[str, type[ProviderAdapter]] = {
     OvhAdapter.key: OvhAdapter,
     GcoreAdapter.key: GcoreAdapter,
     GcoreHostingAdapter.key: GcoreHostingAdapter,
+    NetlenAdapter.key: NetlenAdapter,
+    TubeAdapter.key: TubeAdapter,
+    LightNodeAdapter.key: LightNodeAdapter,
 }
 
 

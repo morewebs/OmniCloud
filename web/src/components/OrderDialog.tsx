@@ -159,7 +159,7 @@ export function OrderDialog({ plan, onClose, onDone }: {
               </Stack>
             )
           )}
-          {plan.extra_ip && (
+          {plan.extra_ip && plan.extra_ip.limit !== 0 && (
             <TextField select label="Extra IPs" value={String(extraIps)} size="small"
                        onChange={e => setExtraIps(Number(e.target.value))}
                        helperText={plan.extra_ip.price

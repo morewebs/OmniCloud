@@ -10,11 +10,18 @@ ordered by what needs attention first — is anything down, what will this
 month cost — with technical depth one click down and a JSON API for
 scripts and tools.
 
-**Server management:** Hetzner Cloud, LeaseWeb, OVHcloud (VPS + Public Cloud),
-Gcore (basic VMs).
+**Server management (8 providers):** Hetzner Cloud, LeaseWeb, OVHcloud
+(VPS + Public Cloud), Gcore Cloud (basic VMs), Gcore Hosting (BILLmanager
+panel), Netlen, Tube-hosting, LightNode.
+**IP change API:** your own script swaps a server's extra IP for a fresh one
+in one call (Gcore Cloud, Gcore Hosting, Hetzner, OVH) - see
+[docs/ip-change.md](docs/ip-change.md).
+**Billing:** per-account balance, invoices with due dates, unpaid orders and
+renewals, as each provider's API reports them.
 **Plan marketplace (7 providers):** Hetzner, LeaseWeb, OVHcloud, Gcore,
 Tube-hosting (live pricing from public APIs) + Netlen, LightNode (curated
-public list prices, stamped with source and last-verified date).
+public list prices, stamped with source and last-verified date). Real
+orders (Hetzner, LeaseWeb, OVH) are opt-in per account.
 
 ## Quick start
 

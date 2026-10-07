@@ -311,6 +311,25 @@ function AddAccountDialog({ adapters, onClose, onDone }: {
               features), then paste it here.
             </Alert>
           )}
+          {effAdapter === 'netlen' && (
+            <Alert severity="info" icon={false}>
+              Create an API key in the Netlen panel (API section) and add this
+              panel's outgoing IP to the key's IP allowlist - Netlen refuses
+              every call from any other address.
+            </Alert>
+          )}
+          {effAdapter === 'tube' && (
+            <Alert severity="info" icon={false}>
+              Your tube-hosting.com login. Their API has no tokens; the panel
+              signs in with e-mail + password (stored encrypted).
+            </Alert>
+          )}
+          {effAdapter === 'lightnode' && (
+            <Alert severity="info" icon={false}>
+              Request an API token in the LightNode console (Account → Token
+              list); LightNode issues it after review.
+            </Alert>
+          )}
           {effAdapter === 'gcore_hosting' && (
             <Alert severity="info" icon={false}>
               Your hosting.gcore.com panel login. The hosting panel

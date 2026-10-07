@@ -200,12 +200,16 @@ ADAPTERS = [
     {"key": "gcore", "display_name": "Gcore",
      "capabilities": ["delete", "power_off", "power_on", "reboot", "relabel",
                       "rename", "shutdown"]},
-    {"key": "tube", "display_name": "Tube-hosting", "capabilities": [],
-     "source": "live"},
-    {"key": "netlen", "display_name": "Netlen", "capabilities": [],
-     "source": "seeded"},
-    {"key": "lightnode", "display_name": "LightNode", "capabilities": [],
-     "source": "seeded"},
+    {"key": "netlen", "display_name": "Netlen",
+     "capabilities": ["ip_add", "power_off", "power_on", "reboot", "shutdown"]},
+    {"key": "tube", "display_name": "Tube-hosting",
+     "capabilities": ["power_off", "power_on", "reboot", "set_password", "shutdown"],
+     "credential_fields": [
+         {"name": "mail", "label": "Account e-mail", "secret": False, "default": None, "help": None},
+         {"name": "password", "label": "Account password", "secret": True, "default": None,
+          "help": None}]},
+    {"key": "lightnode", "display_name": "LightNode",
+     "capabilities": ["power_off", "power_on", "reboot", "shutdown"]},
 ]
 for _ad in ADAPTERS:
     if not _ad.get("source"):

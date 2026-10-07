@@ -398,6 +398,52 @@ renew at their expiry date while the balance covers them
   **Netlen**: `POST /servers/{id}/ips` adds (charges the balance) but no
   release endpoint exists - IP change not offered.
 
+## Netlen, Tube-hosting, LightNode fleets (verified 2026-10-07)
+
+### Netlen (netlen.com.tr/api, v2.0.3)
+- `Authorization: Bearer <key>`; **IP allowlist mandatory** (403
+  `AUTH_IP_NOT_ALLOWED`); envelope `{data, meta{pagination{page, per_page,
+  total, total_pages}}}`, errors `{error{code, message, errors[]}}`.
+- `GET /servers` (list rows have `power_state: null`) + `GET /servers/{id}`:
+  `status active|suspended|pending|cancelled`, `power_state running|
+  stopped|starting|stopping|provisioning|migrating|error|unknown`,
+  `network{ipv4{address}, extra_ips[{address, version}]}`, `billing{amount,
+  currency, cycle monthly|yearly, next_billing_at, deletable}`.
+- `POST /servers/{id}/actions/{start|stop|reboot}` -> 202
+  `data.operation{id}`; `GET /operations/{id}` queued|running|completed|
+  failed.
+- `POST /servers/{id}/ips {version}` -> 201 `{address, price, charged,
+  balance}` - charged to the balance at once; **no release endpoint**.
+  `GET /billing/balance`; invoices are panel-only (501).
+
+### Tube-hosting (api.tube-hosting.com/docs - OpenAPI "v0", generated, unlisted)
+- `POST /login {mail, password, device}` -> `{accessToken, refreshToken}`.
+  The spec declares no security scheme: **Bearer header unverified**.
+- `/servicegroups/currents` is typed only "object" (parsed defensively for
+  nested Service objects `{id, type VPS|DEDICATED|IPV4BUNDLE|BYOIP,
+  serviceGroupId, endDate, price, runtime}`); `GET /vps/{id}` -> `{coreCount,
+  memory, diskSpace, osDisplayName, primaryIPv4{ipv4{ipv4}}}`; `GET
+  /vps/{id}/status` -> `{status}`; `POST /vps/{id}/start|stop|shutdown|
+  restart`; `PUT /vps/{id}/password {password}`.
+- `GET /me` -> `balance` integer - **read as euro-cents** (the verified
+  templates.json convention; unverified for /me). `GET /payments/invoices`
+  -> `{id, time, finished, items[{unitPrice, quantity}]}` - no due date,
+  no paid status. No IP add/release endpoint.
+
+### LightNode (apidoc.lightnode.com)
+- `x-open-token: <token>` against `https://openapi.lightnode.com`.
+- `GET /region/list` -> `{regions[{regionCode, zones[{zoneCode}]}]}`; `GET
+  /instance/list?regionCode&zoneCode` (both required, pageSize <= 50) ->
+  `{instances[], rowCount}`; instance `{ecsResourceUUID, instanceName,
+  ecsStatus (only STARTED documented), ecsPendingStatus (NONE when idle),
+  publicIpAddress, secondaryPublicIpInfoList[], freeFlow (GB),
+  usedFlow (unit unstated - read as GB), createTime}`.
+- `POST /instance/start {ecsResourceUUID}` -> `{asyncTaskUUID}`; `GET
+  /asynctask/getResult` -> `{asyncTaskInfo{taskStatus PROCESSING|FINISHED,
+  processResult SUCCESS|FAIL|RETRY|CANCEL}}`. `/instance/stop` and
+  `/instance/reboot` pages exist; paths assumed to mirror start.
+- No IP, billing, balance or expiry endpoints.
+
 ## Billing per provider (verified 2026-10-07 against each official API spec)
 
 - **OVHcloud** (/1.0/me.json): `GET /me/bill?date.from` -> ids; `GET

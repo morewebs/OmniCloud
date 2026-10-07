@@ -359,10 +359,21 @@ renew at their expiry date while the balance covers them
   `subaccountamount_iso` e.g. "9.00 EUR"); `func=subaccount` (balance) is
   documented with access level admin - a client-account refusal reads
   "not exposed".
+- **Measured on a live account (2026-10-07)**: list rows carry
+  `item_status` as `{"$orig": "2", "$": "Active"}` (the code in `$orig`), and
+  some rows omit it - the code is then in `item_real_status`. A daily-billed
+  service has `billdaily: on`, `expiredate: "Daily charges"` and its date in
+  `real_expiredate`. `service.ip` rows add `gateway`, `mask`, `ip_status`,
+  `enable_delete`, `addonlimit`; an extra IP can sit in a different /24 from
+  the main one (own gateway). `func=expense` lists charges newest first
+  (`amount`, `intname` vds/ip, `main_item`, `realdate`): on a daily-billed
+  server each add-on IP is one daily line (0.0774-0.08 EUR in Baku).
+  `func=subaccount` is readable by the client account. The add-IP form
+  offers `maxcount` (8 on KVM-SSD-2-DTA).
 - **Unverified until tested on a live account**: whether `count=1` on
   `service.ip.edit` is honoured; whether an IP order ever returns a
   `billorder`/payment instead of charging the balance (handled as
-  awaiting_payment if it does); client access to `func=subaccount`.
+  awaiting_payment if it does).
 
 ## Extra IPs per provider (the IP-change API, docs/ip-change.md)
 

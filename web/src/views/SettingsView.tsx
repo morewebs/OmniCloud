@@ -192,10 +192,18 @@ export function SettingsView() {
   );
 }
 
+type TokenScope = 'full' | 'ip_change' | 'ip_read';
+
+const SCOPE_HELP: Record<TokenScope, string | undefined> = {
+  full: undefined,
+  ip_change: 'Only the IP-change API (docs/ip-change.md)',
+  ip_read: 'Only IP lookups - for the server whose IPs change',
+};
+
 interface TokenRow {
   id: number;
   name: string;
-  scope: 'full' | 'ip_change';
+  scope: TokenScope;
   created_at: string;
   last_used_at: string | null;
 }
@@ -207,7 +215,7 @@ function ApiTokensPanel({ onToast }: { onToast: (m: string, s?: 'success' | 'err
     queryFn: () => api<TokenRow[]>('/api/auth/tokens') });
   const qc = useQueryClient();
   const [name, setName] = useState('');
-  const [scope, setScope] = useState<'full' | 'ip_change'>('full');
+  const [scope, setScope] = useState<TokenScope>('full');
   const [created, setCreated] = useState<string | null>(null); // one-time reveal
   const [revoking, setRevoking] = useState<TokenRow | null>(null);
   const [busy, setBusy] = useState(false);
@@ -259,8 +267,10 @@ function ApiTokensPanel({ onToast }: { onToast: (m: string, s?: 'success' | 'err
                sx={{ alignItems: 'center', justifyContent: 'space-between' }}>
           <Stack sx={{ minWidth: 0 }}>
             <Typography variant="body2" sx={{ fontWeight: 500 }}>
-              {t.name}{t.scope === 'ip_change' && (
-                <Chip size="small" variant="outlined" label="IP change only" sx={{ ml: 1, height: 18 }} />
+              {t.name}{t.scope !== 'full' && (
+                <Chip size="small" variant="outlined"
+                      label={t.scope === 'ip_change' ? 'IP change only' : 'IP read only'}
+                      sx={{ ml: 1, height: 18 }} />
               )}
             </Typography>
             <Typography variant="caption" sx={{ color: 'text.secondary' }}>
@@ -288,10 +298,11 @@ function ApiTokensPanel({ onToast }: { onToast: (m: string, s?: 'success' | 'err
         <TextField size="small" label="Token name" value={name}
                    onChange={e => setName(e.target.value)} sx={{ width: 200 }} />
         <TextField select size="small" label="Scope" value={scope} sx={{ width: 170 }}
-                   onChange={e => setScope(e.target.value as 'full' | 'ip_change')}
-                   helperText={scope === 'ip_change' ? 'Only the IP-change API (docs/ip-change.md)' : undefined}>
+                   onChange={e => setScope(e.target.value as TokenScope)}
+                   helperText={SCOPE_HELP[scope]}>
           <MenuItem value="full">Full (your role)</MenuItem>
           <MenuItem value="ip_change">IP change only</MenuItem>
+          <MenuItem value="ip_read">IP read only</MenuItem>
         </TextField>
         <Button variant="contained" disabled={busy || !name.trim()} onClick={create}>
           {busy ? 'Creating…' : 'Create token'}

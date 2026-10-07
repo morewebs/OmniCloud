@@ -9,6 +9,7 @@ Each server keeps one **primary** IP, which this API never touches. Only the ext
 1. **Credentials → the provider account → Purchases: on.** A change buys an IP, and accounts start with purchases off.
 2. **Settings → API tokens → New token, scope `ip_change`.** Create it as an admin, because changing an IP spends money. A token with this scope can reach only the three endpoints below, so a leaked one can't delete servers or read billing.
 3. Optional: **Settings → IP acquisitions per 24 h** (default 10 per account). Every add or change attempt counts, whatever its outcome, so a script stuck in a loop stops at the cap.
+4. Optional: **a token with scope `ip_read`** for the server whose IPs change. It reaches only `GET /api/ips/{ip}`, so the server can poll its own primary IP and learn its current extra IPs (each with `gateway` and `prefix` when the provider states them) without being able to change or release anything. The cost in that answer is cached for an hour, so polling every few seconds never reaches the provider.
 
 ## Endpoints
 
@@ -72,9 +73,9 @@ echo "still filtered after 5 changes" >&2; exit 1
 |---|---|---|---|
 | Gcore Cloud | reserved public IP | the **minutes** each IP existed | Billed per minute from creation to deletion, attached or not. Cheap to churn. A reserved IP that fails to attach is deleted at once. |
 | Hetzner Cloud | Floating IP | a month's rent per new IP | Billed monthly (API spec). Configure the IP on the server's OS. |
-| Gcore Hosting (BILLmanager) | additional IP | a **new IP purchase** each time | No "change IP" feature exists. Refunds for released IPs come only through a support request. Some plans cap extra IPs (KVM-SSD-1: 2), so use `release_first`. |
+| Gcore Hosting (BILLmanager) | additional IP | daily-billed servers: the **days** each IP was held (`per: "day"`, from the expense log); others: a **new IP purchase** each time | No "change IP" feature exists. On a monthly server, refunds for released IPs come only through a support request. Some plans cap extra IPs (KVM-SSD-1: 2), so use `release_first`. An extra IP can come from another /24 with its own gateway. |
 | OVHcloud VPS | additional (failover) IP | a month's rent per new IP | Ordered as an **unpaid** order (`202` + `pay_url`), never auto-paid. Delivered after payment. |
 | LeaseWeb, Tube-hosting, LightNode | — | — | No API to add or release IPs. IPs are listed only. |
 | Netlen | — | — | The API can add an IP but not release one, so changes would only pile up IPs. Not offered. |
 
-A newly attached IP may need OS-side configuration before it answers: a hot-plugged interface on Gcore Cloud, or the floating IP added to the interface on Hetzner. Bring the address up in your script before you test it.
+A newly attached IP may need OS-side configuration before it answers: a hot-plugged interface on Gcore Cloud, the floating IP added to the interface on Hetzner, or on Gcore Hosting the address plus a source route via its own `gateway`. Bring the address up before you test it - from your script, or from the server itself polling `GET /api/ips/{primary}` with an `ip_read` token.

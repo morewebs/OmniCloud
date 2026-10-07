@@ -14,10 +14,17 @@ see docs/provider-truth.md "Gcore Hosting"):
   errors as doc.error.msg.$.
 - func=vds: servers (id, domain, ip, pricelist, cost, expiredate,
   autoprolong, item_status 1 ordered/2 active/3 suspended/4 deleted/5
-  processing). BILLmanager knows the SERVICE state, not the VM's power
+  processing). Live panels (hosting.gcore.com, 2026-10) send item_status as
+  the localized word with the code beside it ({"$orig": "2", "$": "Active"})
+  and sometimes omit it, leaving the code in item_real_status. A daily-billed
+  service (billdaily on) reads expiredate "Daily charges"; its date is in
+  real_expiredate. BILLmanager knows the SERVICE state, not the VM's power
   state - power state is not exposed here.
 - func=service.ip elid=<server>: the server's IPs (id, name = the address,
-  is_main, no_delete, type).
+  is_main, no_delete, type, gateway, mask).
+- func=expense: the charge log (amount, intname vds/ip, main_item = the
+  server, realdate). On a daily-billed server each add-on IP is a daily
+  line, which is what an extra IP costs there.
 - func=service.ip.edit plid=<server>: the add-IP form (slist "type" +
   domain); the same func with sok=ok orders one IP. The address is unknown
   until the order completes - there is no preview. Each order is a fresh
@@ -132,6 +139,40 @@ def _v(x: Any, key: str) -> str:
 def _elems(doc: dict) -> list[dict]:
     e = doc.get("elem", [])
     return e if isinstance(e, list) else [e]
+
+
+def _status_code(row: dict) -> str:
+    """The service's item_status code: the $orig beside the localized word,
+    a bare numeric value, or item_real_status when the field is missing."""
+    st = row.get("item_status")
+    if isinstance(st, dict) and st.get("$orig"):
+        return str(st["$orig"]).strip()
+    code = _v(row, "item_status")
+    if code.isdigit():
+        return code
+    return _v(row, "item_real_status")
+
+
+def _deleted(row: dict) -> bool:
+    return _status_code(row) == "4"
+
+
+def _daily(row: dict) -> bool:
+    return _v(row, "billdaily") == "on"
+
+
+def _expiry(row: dict) -> str:
+    """The paid-until date: expiredate, or real_expiredate when expiredate is
+    a phrase ("Daily charges") instead of a date."""
+    exp = _v(row, "expiredate")
+    return exp if parse_dt(exp) else _v(row, "real_expiredate")
+
+
+def _prefix(mask: str) -> int | None:
+    try:
+        return ipaddress.ip_network(f"0.0.0.0/{mask}").prefixlen if mask else None
+    except ValueError:
+        return None
 
 
 def parse_money(text: str) -> Money | None:
@@ -251,7 +292,7 @@ class GcoreHostingAdapter(ProviderAdapter):
         servers = []
         for row in _elems(doc):
             sid = _v(row, "id")
-            if not sid or _v(row, "item_status") == "4":
+            if not sid or _deleted(row):
                 continue  # deleted services linger in the list; not fleet
             ips = await self.list_ips(sid)
             servers.append(self._to_server(row, ips))
@@ -265,13 +306,15 @@ class GcoreHostingAdapter(ProviderAdapter):
         raise AdapterError(f"no such server: {provider_id}", status_code=404)
 
     def _to_server(self, row: dict, ips: list[IpAddress]) -> Server:
-        status, word = ITEM_STATUS.get(_v(row, "item_status"),
-                                       (ServerStatus.UNKNOWN, _v(row, "item_status") or "?"))
+        code = _status_code(row)
+        status, word = ITEM_STATUS.get(code, (ServerStatus.UNKNOWN, code or "?"))
         facets = [Facet(label="service", value=word)]
         if _v(row, "pricelist"):
             facets.append(Facet(label="plan", value=_v(row, "pricelist")))
-        if _v(row, "expiredate"):
-            facets.append(Facet(label="paid until", value=_v(row, "expiredate")))
+        if _daily(row):
+            facets.append(Facet(label="billing", value="daily from balance"))
+        if _expiry(row):
+            facets.append(Facet(label="paid until", value=_expiry(row)))
         if _v(row, "autoprolong"):
             facets.append(Facet(label="auto-renew", value=_v(row, "autoprolong")))
         if _v(row, "cost"):
@@ -312,7 +355,7 @@ class GcoreHostingAdapter(ProviderAdapter):
             while True:
                 doc = await self._call("vds")
                 rows = {_v(r, "id"): r for r in _elems(doc)}
-                if server_id not in rows or _v(rows[server_id], "item_status") == "4":
+                if server_id not in rows or _deleted(rows[server_id]):
                     return ActionResult(detail="gone from the panel's server list")
                 if time.monotonic() >= deadline:
                     raise ActionTimeout(f"delete {server_id}")
@@ -343,6 +386,8 @@ class GcoreHostingAdapter(ProviderAdapter):
                 primary=primary,
                 kind="main" if primary else (_v(row, "type") or "additional"),
                 provider_ip_id=_v(row, "id") or None,
+                gateway=_v(row, "gateway") or None,
+                prefix=_prefix(_v(row, "mask")),
             ))
         return out
 
@@ -400,6 +445,18 @@ class GcoreHostingAdapter(ProviderAdapter):
             await asyncio.sleep(POLL_INTERVAL_S)
 
     async def ip_cost(self, server_id: str) -> IpCost | None:
+        server = next((r for r in _elems(await self._call("vds"))
+                       if _v(r, "id") == server_id), None)
+        if server is not None and _daily(server):
+            # pay as you go: each add-on IP is a daily charge from the
+            # balance, so a change costs the days each IP was held
+            price = None
+            for row in _elems(await self._call("expense")):
+                if _v(row, "intname") == "ip" and _v(row, "main_item") == server_id:
+                    price = parse_money(_v(row, "amount"))
+                    break  # newest first
+            return IpCost(price=price, per="day",
+                          note="billed daily from the balance while the IP is held")
         return IpCost(price=None, per="purchase",
                       note="each change orders a new IP at the panel's price; "
                            "refunds for released IPs only via a support request")
@@ -438,13 +495,15 @@ class GcoreHostingAdapter(ProviderAdapter):
             not_exposed.append("invoices")
         renewals = []
         for row in _elems(await self._call("vds")):
-            if _v(row, "item_status") == "4" or not _v(row, "expiredate"):
+            if _deleted(row) or not _expiry(row):
                 continue
             ap = _v(row, "autoprolong")
+            # a daily-billed service charges the balance every day: it renews
+            # automatically whether or not autoprolong is set
+            auto = True if _daily(row) else (None if not ap else ap not in ("off", "0", "null"))
             renewals.append(Renewal(
                 provider_id=_v(row, "id"), name=_v(row, "domain") or _v(row, "id"),
-                date=parse_dt(_v(row, "expiredate")),
-                auto=None if not ap else ap not in ("off", "0", "null"),
+                date=parse_dt(_expiry(row)), auto=auto,
             ))
         return Billing(model="prepaid balance; each server renews from it at its expiry date",
                        balance=balance, invoices=invoices, renewals=renewals,

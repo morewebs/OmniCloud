@@ -47,6 +47,9 @@ def test_env(monkeypatch):
     # the next (order-dependent results) - every test starts cold
     from server.adapters import hetzner
     monkeypatch.setattr(hetzner, "_catalog", None)
+    # same for the IP-cost cache: account ids restart in every test's DB
+    from server import ips
+    monkeypatch.setattr(ips, "_cost_cache", {})
     # fixture panel hosts (*.example.test) resolve to a documentation
     # address - never real DNS; tests of the internal-address guard
     # override this
@@ -413,21 +416,26 @@ def mock_gcore_transport():
 def mock_gcore_hosting_transport(*, expire_session_once: bool = False,
                                  subaccount_denied: bool = False,
                                  ip_appears_after: int = 0,
-                                 payment_required: bool = False):
+                                 payment_required: bool = False,
+                                 live: bool = False):
     """Stateful BILLmanager double: every request is a form/query with func=.
     IP orders append a fresh documentation-range address (after
     `ip_appears_after` further service.ip reads, like a provisioning delay);
-    deletes remove it. Returns (transport, calls, state) - calls are
-    (http_method, func, params) with the password redacted."""
+    deletes remove it. `live` swaps in the field shapes hosting.gcore.com
+    actually sends (2026-10): item_status as {"$orig", "$": word}, a
+    daily-billed server, gateway/mask on IPs. Returns (transport, calls,
+    state) - calls are (http_method, func, params) with the password redacted."""
     import copy
     from urllib.parse import parse_qs
 
     import httpx
 
+    sids = ("6201", "6202") if live else ("5101", "5102")
     state = {
         "ips": {sid: copy.deepcopy(fixture(f"gcore_hosting/service_ip_{sid}.json"))
-                for sid in ("5101", "5102")},
-        "vds": copy.deepcopy(fixture("gcore_hosting/vds.json")),
+                for sid in sids},
+        "vds": copy.deepcopy(fixture("gcore_hosting/vds_live.json" if live
+                                     else "gcore_hosting/vds.json")),
         "next_ip": 30, "pending": [], "expired": expire_session_once,
         "passwords": {},
     }
@@ -501,6 +509,8 @@ def mock_gcore_hosting_transport(*, expire_session_once: bool = False,
             return httpx.Response(200, json={"doc": {"ok": {"$": ""}}})
         if func == "payment":
             return httpx.Response(200, json=fixture("gcore_hosting/payment.json"))
+        if func == "expense":
+            return httpx.Response(200, json=fixture("gcore_hosting/expense.json"))
         if func == "subaccount":
             if subaccount_denied:
                 return httpx.Response(200, json=fixture("gcore_hosting/error_access.json"))

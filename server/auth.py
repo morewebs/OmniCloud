@@ -56,7 +56,7 @@ class User:
     scope: str = "full"  # API-token scope; sessions are always full
 
 
-TOKEN_SCOPES = ("full", "ip_change")
+TOKEN_SCOPES = ("full", "ip_change", "ip_read")
 
 # What an ip_change-scoped token may reach: look an IP up, change it, and
 # collect a change's result after a dropped connection. It is the token an
@@ -69,13 +69,21 @@ _IP_CHANGE_ROUTES = (
     ("GET", re.compile(r"^/api/auth/me$")),
 )
 
+# ip_read: look an IP up and nothing else. Held by the server whose IPs
+# change, to learn its own current address list - a leak there spends nothing.
+_IP_READ_ROUTES = (
+    ("GET", re.compile(r"^/api/ips/[^/]+$")),
+    ("GET", re.compile(r"^/api/auth/me$")),
+)
+
+_SCOPE_ROUTES = {"ip_change": _IP_CHANGE_ROUTES, "ip_read": _IP_READ_ROUTES}
+
 
 def scope_allows(scope: str, method: str, path: str) -> bool:
     if scope == "full":
         return True
-    if scope == "ip_change":
-        return any(m == method and rx.match(path) for m, rx in _IP_CHANGE_ROUTES)
-    return False
+    routes = _SCOPE_ROUTES.get(scope, ())
+    return any(m == method and rx.match(path) for m, rx in routes)
 
 
 MIN_PASSWORD_LEN = 8

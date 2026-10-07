@@ -209,3 +209,35 @@ async def test_generic_action_route_refuses_ip_kinds(client, monkeypatch):
     r = client.post(f"/api/servers/{aid}/5101/actions", headers=HDRS,
                     json={"kind": "ip_change", "params": {}})
     assert r.status_code == 400
+
+
+async def test_ip_read_token_only_looks_ips_up(client, monkeypatch):
+    """What the changing server itself holds: it reads its own IP list
+    (gateway + prefix included) and can neither change nor release one."""
+    calls, _ = _panel(monkeypatch)
+    await _account(client)
+    tok = client.post("/api/auth/tokens", headers=HDRS,
+                      json={"name": "reconciler", "scope": "ip_read"}).json()
+    assert tok["scope"] == "ip_read"
+    client.cookies.clear()
+    b = {"Authorization": f"Bearer {tok['token']}"}
+    info = client.get(f"/api/ips/{PRIMARY}", headers=b)
+    assert info.status_code == 200 and info.json()["primary"]
+    assert {i["address"] for i in info.json()["ips"]} == {PRIMARY, EXTRA}
+    assert client.post(f"/api/ips/{EXTRA}/change", headers=b).status_code == 403
+    assert client.get("/api/actions/1", headers=b).status_code == 403
+    assert client.get("/api/fleet", headers=b).status_code == 403
+    assert not any(c[1] in ("service.ip.edit", "service.ip.delete") for c in calls)
+
+
+async def test_describe_caches_the_cost_lookup(client, monkeypatch):
+    """A server polling its own IP list must not log in to the panel on
+    every poll: the cost (a live provider call) is cached."""
+    calls, _ = _panel(monkeypatch)
+    await _account(client)
+    b = _script_token(client)
+    client.get(f"/api/ips/{PRIMARY}", headers=b)
+    n = len(calls)
+    for _ in range(3):
+        assert client.get(f"/api/ips/{PRIMARY}", headers=b).status_code == 200
+    assert len(calls) == n

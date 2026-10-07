@@ -84,8 +84,8 @@ def _http_errors():
 
 def _full_scope_user(header: str | None) -> auth.User | None:
     """Bearer -> user, full-scope tokens only. MCP authenticates outside
-    require_user, so it must apply the scope rule itself: an ip_change
-    token (held by a remote rotation script) reaches nothing here."""
+    require_user, so it must apply the scope rule itself: an ip_change or
+    ip_read token (held by a remote script or server) reaches nothing here."""
     user = auth.user_for_bearer(header)
     return user if user is not None and user.scope == "full" else None
 
@@ -584,8 +584,9 @@ async def list_api_tokens(ctx: Context) -> dict:
 async def create_api_token(ctx: Context,
                            name: Annotated[str, Field(min_length=1, max_length=100)],
                            scope: Annotated[str, Field(description=(
-                               "full (your role) or ip_change (only the IP-change API "
-                               "- for a remote rotation script)"))] = "full") -> dict:
+                               "full (your role), ip_change (only the IP-change API "
+                               "- for a remote rotation script) or ip_read (only IP "
+                               "lookups - for the server whose IPs change)"))] = "full") -> dict:
     """Mint a personal API token for yourself. The plaintext is in this
     result exactly once - it cannot be retrieved later."""
     return await _call(ctx, api.create_token, body=api.TokenBody(name=name, scope=scope))

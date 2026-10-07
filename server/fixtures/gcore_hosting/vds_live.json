@@ -1,0 +1,15 @@
+{"doc": {"$lang": "en", "$func": "vds", "elem": [
+  {"id": {"$": "6201"}, "domain": {"$": "srv-bak-01"}, "ip": {"$": "203.0.113.40"},
+   "pricelist": {"$": "KVM-SSD-2-DTA"}, "cost": {"$": "7.35 EUR / Month"},
+   "billdaily": {"$": "on"}, "expiredate": {"$": "Daily charges"},
+   "real_expiredate": {"$": "2026-10-08"}, "item_real_status": {"$": "2"}, "status": {"$": "2"},
+   "datacentername": {"$": "Azerbaijan, Baku"}},
+  {"id": {"$": "6202"}, "domain": {"$": "srv-ist-01"}, "ip": {"$": "203.0.113.50"},
+   "pricelist": {"$": "KVM-SSD-2-TII"}, "cost": {"$": "4.95 EUR / Month"},
+   "billdaily": {"$": "off"}, "expiredate": {"$": "2026-11-04"}, "real_expiredate": {"$": "2026-11-04"},
+   "autoprolong": {"$": "Month"}, "item_real_status": {"$": "2"},
+   "item_status": {"$color": "green", "$orig": "2", "$": "Active"},
+   "datacentername": {"$": "Turkey, Istanbul"}, "createdate": [{"$": "2026-10-04"}, {"$": "2026-10-04"}]},
+  {"id": {"$": "6203"}, "domain": {"$": "srv-gone-01"}, "ip": {"$": "203.0.113.60"},
+   "pricelist": {"$": "KVM-SSD-1-DTA"}, "item_status": {"$color": "gray", "$orig": "4", "$": "Deleted"}}
+]}}

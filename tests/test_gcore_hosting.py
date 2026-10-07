@@ -127,6 +127,44 @@ async def test_ip_cost_says_each_change_is_a_purchase():
     assert cost.per == "purchase" and cost.price is None
 
 
+# -- the field shapes hosting.gcore.com actually sends (2026-10) ----------------
+
+async def test_live_status_shapes_and_daily_billing():
+    a, _, _ = _adapter(live=True)
+    servers = {s.provider_id: s for s in await a.list_servers()}
+    # item_status {"$orig": "4", "$": "Deleted"} is deleted, not a server
+    assert set(servers) == {"6201", "6202"}
+    facets = {f.label: f.value for f in servers["6201"].facets}
+    # item_status missing: the code comes from item_real_status
+    assert facets["service"] == "active"
+    # "Daily charges" is not a date - the real one is real_expiredate
+    assert facets["billing"] == "daily from balance" and facets["paid until"] == "2026-10-08"
+    assert {f.label: f.value for f in servers["6202"].facets}["service"] == "active"
+
+
+async def test_live_ips_carry_gateway_and_prefix():
+    a, _, _ = _adapter(live=True)
+    ips = {i.address: i for i in await a.list_ips("6201")}
+    assert ips["203.0.113.40"].primary and not ips["198.51.100.41"].primary
+    # an extra IP from another subnet needs its own gateway on the server
+    assert (ips["198.51.100.41"].gateway, ips["198.51.100.41"].prefix) == ("198.51.100.1", 24)
+
+
+async def test_ip_cost_on_a_daily_server_is_the_daily_add_on_charge():
+    a, _, _ = _adapter(live=True)
+    cost = await a.ip_cost("6201")
+    assert cost.per == "day" and cost.price.amount == Decimal("0.0774")
+    assert (await a.ip_cost("6202")).per == "purchase"  # monthly server
+
+
+async def test_daily_server_renews_automatically():
+    a, _, _ = _adapter(live=True)
+    by_id = {r.provider_id: r for r in (await a.get_billing()).renewals}
+    assert by_id["6201"].auto is True and by_id["6201"].date.date().isoformat() == "2026-10-08"
+    assert by_id["6202"].auto is True  # autoprolong "Month"
+    assert "6203" not in by_id
+
+
 @pytest.mark.parametrize("text,amount,cur", [
     ("5.00 EUR", "5.00", "EUR"), ("€5.00", "5.00", "EUR"), ("5,00 EUR", "5.00", "EUR"),
     ("12 USD", "12", "USD"),

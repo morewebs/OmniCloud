@@ -1,0 +1,9 @@
+{"doc": {"$func": "expense", "elem": [
+  {"id": {"$": "880003"}, "intname": {"$": "ip"}, "item": {"$": "6211"}, "main_item": {"$": "6201"},
+   "amount": {"$": "0.0774 EUR"}, "realdate": {"$": "2026-10-07"},
+   "locale_name": {"$": "Add-on Public IPv4-address - 1 pcs (KVM-SSD-2-DTA #6201)"}},
+  {"id": {"$": "880002"}, "intname": {"$": "vds"}, "item": {"$": "6201"}, "main_item": {"$": "6201"},
+   "amount": {"$": "0.1596 EUR"}, "realdate": {"$": "2026-10-07"}},
+  {"id": {"$": "880001"}, "intname": {"$": "ip"}, "item": {"$": "6211"}, "main_item": {"$": "6201"},
+   "amount": {"$": "0.08 EUR"}, "realdate": {"$": "2026-09-20"}}
+]}}

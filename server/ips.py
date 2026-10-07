@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import time
 from datetime import datetime, timedelta, timezone
 
 from . import accounts, audit, db
@@ -25,7 +26,12 @@ from .adapters.base import (ActionTimeout, AdapterError, Capability, IpAddress, 
 
 DEFAULT_DAILY_CAP = 10
 
+# describe()'s cost lookup is a live provider call; a server polling its own
+# IP list must not log in to the provider panel on every poll
+COST_TTL_S = 3600
+
 _locks: dict[tuple[int, str], asyncio.Lock] = {}
+_cost_cache: dict[tuple[int, str], tuple[float, IpCost | None]] = {}
 
 
 class IpError(Exception):
@@ -164,6 +170,23 @@ def _publish(account_id: int, kind: str, status: str) -> None:
     sync.publish("action", {"account_id": account_id, "kind": kind, "status": status})
 
 
+async def _cached_cost(account: dict, provider_id: str) -> IpCost | None:
+    key = (account["id"], provider_id)
+    hit = _cost_cache.get(key)
+    if hit and time.monotonic() - hit[0] < COST_TTL_S:
+        return hit[1]
+    adapter = accounts.build_adapter(account)
+    try:
+        cost = await adapter.ip_cost(provider_id)
+    except AdapterError:
+        cost = None
+    finally:
+        with contextlib.suppress(Exception):
+            await adapter.close()
+    _cost_cache[key] = (time.monotonic(), cost)
+    return cost
+
+
 async def describe(address: str) -> dict:
     """GET /api/ips/{ip}: who owns it, is it swappable, what a change costs."""
     found = find_owner(address)
@@ -174,14 +197,7 @@ async def describe(address: str) -> dict:
     caps = _caps(account)
     cost = None
     if Capability.IP_ADD in caps:
-        adapter = accounts.build_adapter(account)
-        try:
-            cost = await adapter.ip_cost(server["provider_id"])
-        except AdapterError:
-            cost = None
-        finally:
-            with contextlib.suppress(Exception):
-                await adapter.close()
+        cost = await _cached_cost(account, server["provider_id"])
     return {
         "address": address,
         "account_id": account["id"], "account": account["name"],

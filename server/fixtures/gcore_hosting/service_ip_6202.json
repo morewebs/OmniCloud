@@ -1,0 +1,4 @@
+{"doc": {"$func": "service.ip", "elem":
+  {"id": {"$": "7710"}, "name": {"$": "203.0.113.50"}, "is_main": {"$": "on"}, "no_delete": {"$": "on"},
+   "gateway": {"$": "203.0.113.1"}, "mask": {"$": "255.255.255.0"}, "type": {"$": "Public IPv4-address"}}
+}}

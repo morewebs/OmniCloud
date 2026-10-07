@@ -88,6 +88,10 @@ class IpAddress(BaseModel):
     kind: str = ""                     # provider's own word: "additional", "floating", ...
     provider_ip_id: str | None = None  # provider handle when it differs from the address
     monthly_price: Money | None = None
+    # on-link gateway and prefix length, when the provider states them: an
+    # extra IP from another subnet needs its own source route on the server
+    gateway: str | None = None
+    prefix: int | None = None
 
 
 class Server(BaseModel):
@@ -130,7 +134,7 @@ class IpCost(BaseModel):
     a reserved IP billed by the minute is cheap to churn, a monthly one is
     a fresh month's rent per change. price=None = not published."""
     price: Money | None = None
-    per: str                      # "hour" | "month" | "purchase"
+    per: str                      # "hour" | "day" | "month" | "purchase"
     note: str | None = None
 
 

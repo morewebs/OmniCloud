@@ -1,6 +1,21 @@
 # Changelog
 
-## Unreleased
+## 0.5.0 (2026-10-07)
+
+- **`ip_read` token scope**: reaches only `GET /api/ips/{ip}` (and
+  `/api/auth/me`). Held by the server whose IPs change, so it can learn its
+  own current address list (now with each IP's `gateway` and `prefix`)
+  without being able to change, release or spend anything.
+- **Gcore Hosting, measured against the live panel** (hosting.gcore.com,
+  2026-10): `item_status` arrives as the localized word with the code in
+  `$orig` (or only in `item_real_status`), so deleted services were listed
+  as servers - the code is read from there now. Daily-billed services
+  (`billdaily`, expiry "Daily charges") show "daily from balance", their
+  real paid-until date and an automatic renewal. IPs carry the panel's
+  `gateway` and `mask`. On a daily-billed server an extra IP's cost is the
+  daily add-on charge from the expense log (`per: "day"`).
+- `GET /api/ips/{ip}` caches its provider cost lookup for an hour, so a
+  server polling its own IP list doesn't log in to the provider every poll.
 
 - **IP change API** (`POST /api/ips/{ip}/change`, docs/ip-change.md): an
   operator's own server/script swaps one of a server's extra IPs for a

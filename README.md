@@ -129,7 +129,7 @@ claude mcp add --transport http omnicloud https://panel.example.net/mcp \
   `action_id` to poll. They never report success before the provider confirms.
 
 A token can do everything its role can, so give agents a viewer token unless
-they need to operate. `ip_change`-scoped tokens are refused at `/mcp`. The full tool reference, auth details and client
+they need to operate. `ip_change`- and `ip_read`-scoped tokens are refused at `/mcp`. The full tool reference, auth details and client
 examples are in [docs/mcp.md](docs/mcp.md).
 
 ## Configuration

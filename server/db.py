@@ -143,7 +143,8 @@ CREATE TABLE IF NOT EXISTS api_tokens (
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     name TEXT NOT NULL,
     token_hash TEXT NOT NULL UNIQUE,
-    -- 'full' = the owner's role; 'ip_change' = only the IP-change API
+    -- 'full' = the owner's role; 'ip_change' = only the IP-change API;
+    -- 'ip_read' = only GET /api/ips/{ip}
     scope TEXT NOT NULL DEFAULT 'full',
     created_at TEXT NOT NULL,
     last_used_at TEXT

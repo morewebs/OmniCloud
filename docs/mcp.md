@@ -47,9 +47,10 @@ The Vite dev server (`:5173`) proxies `/mcp` to it as well.
 
 - **Credential:** only personal API tokens are accepted. A browser session
   cookie is not, so the endpoint has no CSRF surface.
-- **Scope:** only `full`-scope tokens. An `ip_change` token (Settings →
-  API tokens → IP change only) is refused like an unknown one - it is meant
-  for a rotation script calling the REST IP-change API, nothing else.
+- **Scope:** only `full`-scope tokens. An `ip_change` or `ip_read` token
+  (Settings → API tokens → IP change only / IP read only) is refused like an
+  unknown one - they are meant for a rotation script and the server whose IPs
+  change, calling the REST IP API, nothing else.
 - **No token, or an unknown, revoked or disabled one:** HTTP `401` with
   `{"detail": "Not signed in"}` and `WWW-Authenticate: Bearer`. This happens
   before any MCP message is handled, so the caller can't even list tools.
@@ -197,7 +198,7 @@ entering credentials in the web UI keeps them out of the conversation.
 | `create_user` | admin | `username`, `password`, `role?` | New user (viewer by default) |
 | `update_user` | admin | `user_id`, `role?`, `disabled?`, `password?` | Change role, disable, reset password (signs the user out) |
 | `list_api_tokens` | viewer | | Your own tokens (no plaintext) |
-| `create_api_token` | viewer | `name`, `scope?` | New token for yourself (`full` or `ip_change`). The plaintext appears in this result once |
+| `create_api_token` | viewer | `name`, `scope?` | New token for yourself (`full`, `ip_change` or `ip_read`). The plaintext appears in this result once |
 | `revoke_api_token` | viewer | `token_id` | Revoke one of your own tokens |
 | `get_settings` | admin | | `sync_*`, `update_*`, `ip_*` and `billing_*` settings |
 | `update_settings` | admin | `settings` | Write settings (keys must start with `sync_`, `update_`, `ip_` or `billing_`) |

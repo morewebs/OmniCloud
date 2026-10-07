@@ -178,7 +178,7 @@ def _set_cookie(response: Response, token: str) -> None:
 
 class TokenBody(BaseModel):
     name: str = Field(min_length=1, max_length=100)
-    scope: str = "full"  # or "ip_change": only the IP-change API (auth.TOKEN_SCOPES)
+    scope: str = "full"  # "ip_change" (the IP-change API) or "ip_read" (IP lookup): auth.TOKEN_SCOPES
 
 
 @router.get("/auth/tokens")

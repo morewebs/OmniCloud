@@ -10,7 +10,7 @@ import TableBody from '@mui/material/TableBody';
 import TableCell from '@mui/material/TableCell';
 import TableRow from '@mui/material/TableRow';
 import Typography from '@mui/material/Typography';
-import { api, del, fmtMoney, post } from '../api';
+import { api, del, fmtMoney, post, safeHref } from '../api';
 import type { IpCost, Server } from '../types';
 import { IP_COST_PER } from '../types';
 import { ConfirmDialog } from './ConfirmDialog';
@@ -144,7 +144,7 @@ export function IpSection({ server, isAdmin, capabilities, onDone }: {
         <Alert severity="info">
           The provider created an unpaid order ({result.provider_ref}); the IP is
           delivered after payment.{' '}
-          {result.pay_url && <Link href={result.pay_url} target="_blank" rel="noreferrer">Pay the order</Link>}
+          {safeHref(result.pay_url) && <Link href={safeHref(result.pay_url)} target="_blank" rel="noreferrer">Pay the order</Link>}
         </Alert>
       )}
       {error && <Alert severity="error">{error}</Alert>}

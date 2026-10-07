@@ -47,6 +47,14 @@ def test_env(monkeypatch):
     # the next (order-dependent results) - every test starts cold
     from server.adapters import hetzner
     monkeypatch.setattr(hetzner, "_catalog", None)
+    # fixture panel hosts (*.example.test) resolve to a documentation
+    # address - never real DNS; tests of the internal-address guard
+    # override this
+    from server.adapters import gcore_hosting
+
+    async def _resolve(host):
+        return ["203.0.113.250"]
+    monkeypatch.setattr(gcore_hosting, "resolve", _resolve)
     yield
     sync._loop = None
 

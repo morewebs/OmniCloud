@@ -55,6 +55,17 @@ export async function api<T = unknown>(path: string,
   return r.json() as Promise<T>;
 }
 
+/** A provider-supplied link, rendered only if it is https (the server
+ *  filters too) - never a javascript:/data: URL in the operator's browser. */
+export function safeHref(u: string | null | undefined): string | undefined {
+  if (!u) return undefined;
+  try {
+    return new URL(u).protocol === 'https:' ? u : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export function post<T = unknown>(path: string, body?: unknown, timeoutMs?: number) {
   return api<T>(path, { method: 'POST', body: JSON.stringify(body ?? {}), timeoutMs });
 }

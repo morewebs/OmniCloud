@@ -6,7 +6,7 @@ import Skeleton from '@mui/material/Skeleton';
 import Stack from '@mui/material/Stack';
 import TextField from '@mui/material/TextField';
 import Typography from '@mui/material/Typography';
-import { api, del, post, put } from '../api';
+import { api, del, post, put, safeHref } from '../api';
 import Chip from '@mui/material/Chip';
 import MenuItem from '@mui/material/MenuItem';
 import Tooltip from '@mui/material/Tooltip';
@@ -366,7 +366,7 @@ function UpdatePanel({ onToast }: { onToast: (m: string, s?: 'success' | 'error'
           <Stack spacing={0.5}>
             <Typography variant="body2">
               <b>v{d.latest}</b> is available (running v{d.current})
-              {d.url && <> — <a href={d.url} target="_blank" rel="noreferrer">release notes</a></>}
+              {safeHref(d.url) && <> — <a href={safeHref(d.url)} target="_blank" rel="noreferrer">release notes</a></>}
             </Typography>
             {d.update_method === 'rebuild-image' && (
               <Typography variant="caption" sx={{ color: 'text.secondary' }}>

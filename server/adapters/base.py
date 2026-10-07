@@ -18,7 +18,7 @@ from decimal import Decimal
 from enum import StrEnum
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class Capability(StrEnum):
@@ -134,6 +134,21 @@ class IpCost(BaseModel):
     note: str | None = None
 
 
+def https_url(u: str | None) -> str | None:
+    """A provider-supplied link the UI may render: https only. Anything else
+    (javascript:, data:, http:) is dropped - a hostile or compromised panel
+    must not plant a script link in the operator's browser."""
+    from urllib.parse import urlsplit
+    if not u or not isinstance(u, str):
+        return None
+    u = u.strip()
+    try:
+        parts = urlsplit(u)
+    except ValueError:
+        return None
+    return u if parts.scheme == "https" and parts.netloc else None
+
+
 class Invoice(BaseModel):
     """A bill/invoice/unpaid order as the provider reports it. status is the
     provider's own word (paid, unpaid, OVERDUE, notPaid...) - rendered
@@ -144,7 +159,12 @@ class Invoice(BaseModel):
     total: Money | None = None
     open_amount: Money | None = None  # still to pay; None = not exposed
     status: str = ""
-    url: str | None = None            # provider's own view/pay page
+    url: str | None = None            # provider's own view/pay page (https only)
+
+    @field_validator("url")
+    @classmethod
+    def _https_only(cls, v: str | None) -> str | None:
+        return https_url(v)
 
 
 class Renewal(BaseModel):
@@ -329,7 +349,7 @@ class PaymentRequired(AdapterError):
     def __init__(self, what: str, order_ref: str, pay_url: str | None = None):
         super().__init__(f"{what}: provider order {order_ref} awaits payment")
         self.order_ref = order_ref
-        self.pay_url = pay_url
+        self.pay_url = https_url(pay_url)
 
 
 class ActionTimeout(AdapterError):

@@ -138,3 +138,45 @@ def test_parse_money(text, amount, cur):
 
 def test_parse_money_without_currency_is_not_a_price():
     assert parse_money("5.00") is None and parse_money("") is None
+
+
+# -- the panel URL never reaches the panel's own network ---------------------
+
+@pytest.mark.parametrize("url", [
+    "http://panel.example.test/billmgr",            # plain http: password in clear
+    "https://user:pw@panel.example.test/billmgr",   # userinfo
+    "https://panel.example.test:8443/billmgr",      # non-default port
+    "https://127.0.0.1/billmgr", "https://10.0.0.5/billmgr",
+    "https://169.254.169.254/latest", "https://[::1]/billmgr",
+])
+def test_bad_panel_urls_refused_at_construction(url):
+    import json
+    cred = json.loads(GCORE_HOSTING_CRED) | {"url": url}
+    with pytest.raises(AdapterError):
+        GcoreHostingAdapter(1, "x", json.dumps(cred))
+
+
+@pytest.mark.parametrize("addr", ["127.0.0.1", "10.1.2.3", "169.254.169.254",
+                                  "192.168.1.1", "::1", "::ffff:10.0.0.1"])
+async def test_host_resolving_internally_never_gets_the_password(monkeypatch, addr):
+    async def internal(host):
+        return ["203.0.113.250", addr]  # one bad address is enough
+    monkeypatch.setattr(gh, "resolve", internal)
+    a, calls, _ = _adapter()
+    with pytest.raises(AdapterError, match="internal address"):
+        await a.list_servers()
+    assert calls == []  # nothing - not even the login - was sent
+
+
+def test_account_create_refuses_internal_panel_url():
+    from server import accounts
+    with pytest.raises(ValueError, match="internal address"):
+        accounts.pack_credential("gcore_hosting", None, {
+            "url": "https://127.0.0.1/billmgr", "username": "u", "password": "p"})
+
+
+async def test_non_https_pay_link_is_dropped(monkeypatch):
+    from server.adapters.base import Invoice, PaymentRequired
+    assert PaymentRequired("x", "1", "javascript:alert(1)").pay_url is None
+    assert PaymentRequired("x", "1", "https://pay.example.test/1").pay_url.startswith("https://")
+    assert Invoice(id="1", url="data:text/html,x").url is None

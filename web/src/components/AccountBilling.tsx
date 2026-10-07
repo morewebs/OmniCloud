@@ -9,7 +9,7 @@ import Chip from '@mui/material/Chip';
 import Link from '@mui/material/Link';
 import Stack from '@mui/material/Stack';
 import Typography from '@mui/material/Typography';
-import { api, fmtMoney, fmtRelative, post } from '../api';
+import { api, fmtMoney, fmtRelative, post, safeHref } from '../api';
 import type { BillingAccountRow, Invoice } from '../types';
 import { Value } from './Value';
 
@@ -123,7 +123,7 @@ export function AccountBilling({ isAdmin }: { isAdmin: boolean }) {
                             {i.due_date && <> · due <span className="num">{day(i.due_date)}</span></>}
                             {' '}<Chip size="small" variant="outlined" label={i.status}
                                        color={overdue ? 'error' : 'warning'} sx={{ height: 18 }} />
-                            {i.url && <> · <Link href={i.url} target="_blank" rel="noreferrer">view</Link></>}
+                            {safeHref(i.url) && <> · <Link href={safeHref(i.url)} target="_blank" rel="noreferrer">view</Link></>}
                           </Typography>
                         );
                       })}
@@ -132,7 +132,7 @@ export function AccountBilling({ isAdmin }: { isAdmin: boolean }) {
                           Order {o.id} awaits payment
                           {o.total && <> · <span className="num">{fmtMoney(o.total)}</span></>}
                           {o.due_date && <> · expires <span className="num">{day(o.due_date)}</span></>}
-                          {o.url && <> · <Link href={o.url} target="_blank" rel="noreferrer">pay</Link></>}
+                          {safeHref(o.url) && <> · <Link href={safeHref(o.url)} target="_blank" rel="noreferrer">pay</Link></>}
                         </Typography>
                       ))}
                       {renewals.slice(0, 4).map(x => (

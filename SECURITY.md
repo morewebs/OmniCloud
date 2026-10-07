@@ -41,6 +41,12 @@ at providers. Treat an install as critical infrastructure:
   operation per server at a time, and purchase requests to providers are
   sent exactly once (never retried - a retry could buy twice). Panel
   passwords are POSTed to the provider, never placed in a URL.
+- **Operator-entered panel URLs** (Gcore Hosting / BILLmanager): https on
+  the default port only, no userinfo, and the host is resolved before every
+  login - loopback, private, link-local (cloud metadata), CGNAT, multicast
+  and reserved addresses are refused, so the panel can't be pointed at its
+  own network. Provider-supplied links (pay/invoice URLs) are kept and
+  rendered only if they are `https://`.
 - **MCP endpoint** (`/mcp`): accepts personal API tokens only, as
   `Authorization: Bearer`. Session cookies are refused there, so it has no
   CSRF surface.

@@ -64,6 +64,13 @@ def pack_credential(adapter: str, token: str | None,
             raise ValueError(f"{f.label} is required")
         # secrets keep their exact bytes (a password may end in a space)
         values[f.name] = str(v) if f.secret else str(v).strip()
+    if adapter == "gcore_hosting":
+        from .adapters.base import AdapterError
+        from .adapters.gcore_hosting import check_panel_url
+        try:
+            check_panel_url(values["url"])
+        except AdapterError as e:
+            raise ValueError(str(e))
     ident = next((values[f.name] for f in reversed(schema) if not f.secret), None)
     return json.dumps(values), (ident or values[schema[-1].name])[-4:]
 

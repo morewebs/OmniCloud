@@ -34,7 +34,9 @@ see docs/provider-truth.md "Gcore Hosting"):
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import re
+import socket
 import time
 from decimal import Decimal, InvalidOperation
 from typing import Any
@@ -71,6 +73,45 @@ PAYMENT_STATUS = {
     "8": "initiated", "9": "cancelled",
 }
 UNPAID_PAYMENT = {"1", "3", "8"}
+
+# The panel URL is operator-entered and the panel password is POSTed to it,
+# so it must never reach the panel's own network: loopback, RFC 1918,
+# CGNAT, link-local (cloud metadata 169.254.169.254), multicast, reserved.
+_BLOCKED_NETS = tuple(ipaddress.ip_network(n) for n in (
+    "0.0.0.0/8", "10.0.0.0/8", "100.64.0.0/10", "127.0.0.0/8", "169.254.0.0/16",
+    "172.16.0.0/12", "192.168.0.0/16", "224.0.0.0/4", "240.0.0.0/4",
+    "::/128", "::1/128", "fc00::/7", "fe80::/10", "ff00::/8"))
+
+
+def _blocked(addr: str) -> bool:
+    ip = ipaddress.ip_address(addr)
+    if ip.version == 6 and ip.ipv4_mapped:
+        ip = ip.ipv4_mapped
+    return any(ip in n for n in _BLOCKED_NETS if n.version == ip.version)
+
+
+async def resolve(host: str) -> list[str]:
+    """Every address the panel host resolves to (module-level: the test seam)."""
+    infos = await asyncio.get_running_loop().getaddrinfo(host, 443, type=socket.SOCK_STREAM)
+    return [i[4][0] for i in infos]
+
+
+def check_panel_url(url: str) -> tuple[str, str, str]:
+    """(origin, host, path) for a usable panel URL, else AdapterError:
+    https, default port, no userinfo, no internal IP literal."""
+    parts = urlsplit(url)
+    host = (parts.hostname or "").rstrip(".").lower()
+    if parts.scheme != "https" or not host:
+        raise AdapterError("panel URL must be https:// (the password travels to it)")
+    if parts.username or parts.password or parts.port not in (None, 443):
+        raise AdapterError("panel URL must be a plain https://host/path (no login, default port)")
+    try:
+        if _blocked(host):
+            raise AdapterError("panel URL points at an internal address - refused")
+    except ValueError:
+        pass  # a hostname, not an IP literal: resolved and checked before connecting
+    return f"https://{host}", host, parts.path or "/"
+
 
 CURRENCY_SYMBOLS = {"€": "EUR", "$": "USD", "£": "GBP", "₽": "RUB"}
 
@@ -124,16 +165,11 @@ class GcoreHostingAdapter(ProviderAdapter):
     def __init__(self, account_id: int, account_name: str, token: str, http=None):
         super().__init__(account_id, account_name, token, http)
         cred = self.credential()
-        url = cred.get("url") or DEFAULT_URL
-        parts = urlsplit(url)
-        if parts.scheme != "https" or not parts.netloc:
-            raise AdapterError("panel URL must be https:// (the password travels to it)")
-        self._path = parts.path or "/"
+        origin, self._host, self._path = check_panel_url(cred.get("url") or DEFAULT_URL)
         self._user = cred.get("username", "")
         self._password = cred.get("password", "")
         self._sid: str | None = None
-        self.h = phttp.ProviderHttpClient(f"{parts.scheme}://{parts.netloc}",
-                                          lambda req: None, transport=http)
+        self.h = phttp.ProviderHttpClient(origin, lambda req: None, transport=http)
 
     async def close(self) -> None:
         await self.h.aclose()
@@ -141,6 +177,14 @@ class GcoreHostingAdapter(ProviderAdapter):
     # -- transport -------------------------------------------------------------
 
     async def _login(self) -> None:
+        # every connection starts with a login: the host is re-checked here,
+        # before the password is sent anywhere
+        try:
+            addrs = await resolve(self._host)
+        except OSError as e:
+            raise AdapterError(f"panel host {self._host} does not resolve ({e.strerror or e})")
+        if not addrs or any(_blocked(a) for a in addrs):
+            raise AdapterError(f"panel host {self._host} resolves to an internal address - refused")
         r = await self.h.request("POST", self._path, data={
             "func": "auth", "username": self._user, "password": self._password,
             "out": "json"})
@@ -313,7 +357,8 @@ class GcoreHostingAdapter(ProviderAdapter):
                                 count="1", sok="ok")
         order = _v(resp, "billorder") or _v(resp, "payment_id")
         if order:
-            # the panel put the IP behind a payment instead of charging the balance
+            # the panel put the IP behind a payment instead of charging the
+            # balance; PaymentRequired keeps the pay link only if it's https
             raise PaymentRequired("add IP", order, _v(resp, "ok") or None)
         deadline = time.monotonic() + POLL_BUDGET_S
         while True:

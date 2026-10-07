@@ -16,7 +16,7 @@ import TableCell from '@mui/material/TableCell';
 import TableHead from '@mui/material/TableHead';
 import TableRow from '@mui/material/TableRow';
 import Typography from '@mui/material/Typography';
-import { api, fmtTime, post } from '../api';
+import { api, fmtTime, post, safeHref } from '../api';
 
 /** estimated_monthly is JSON in a TEXT column - parse defensively: one
  * corrupted legacy row must never throw in render (white-screen). */
@@ -125,8 +125,8 @@ export function OrdersView() {
                         <Chip size="small" variant="outlined"
                               color={STATUS_COLOR[o.status]}
                               label={o.status.replace('_', ' ')} />
-                        {o.status === 'awaiting_payment' && o.pay_url && (
-                          <Link href={o.pay_url} target="_blank" rel="noreferrer"
+                        {o.status === 'awaiting_payment' && safeHref(o.pay_url) && (
+                          <Link href={safeHref(o.pay_url)} target="_blank" rel="noreferrer"
                                 onClick={e => e.stopPropagation()} variant="body2">pay</Link>
                         )}
                       </Stack>
@@ -215,7 +215,7 @@ function OrderDetailDialog({ orderId, onClose }: { orderId: number; onClose: () 
             <Alert severity="info">
               The provider created order {d.provider_ref} unpaid - nothing is
               delivered or charged until it's paid.{' '}
-              {d.pay_url && <Link href={d.pay_url} target="_blank" rel="noreferrer">Pay it at the provider</Link>}
+              {safeHref(d.pay_url) && <Link href={safeHref(d.pay_url)} target="_blank" rel="noreferrer">Pay it at the provider</Link>}
             </Alert>
           )}
           <Box>

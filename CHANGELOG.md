@@ -1,5 +1,27 @@
 # Changelog
 
+## Unreleased
+
+- **MCP server** at `/mcp` (Streamable HTTP, stateless JSON): AI agents
+  drive the panel through 44 tools covering the whole REST surface —
+  fleet, allowances, billing, catalog, orders, server actions, firewalls,
+  accounts, users, settings, audit, updates — plus three prompts
+  (fleet triage, cost review, plan comparison). Auth is personal API tokens
+  only (`Authorization: Bearer`; session cookies are refused, so no CSRF
+  surface), re-checked on every call. Each tool calls the REST route it
+  wraps, so roles, validation, audit records and error text match the API
+  exactly; viewer tokens get read-only. Server actions return
+  `in_progress` with an `action_id` to poll (`get_action`) when the
+  provider hasn't confirmed within `wait_seconds` — never reported as
+  success early. Destructive tools carry `destructiveHint`. Reference:
+  [docs/mcp.md](docs/mcp.md). The Vite dev server proxies `/mcp` as well.
+- `GET /api/actions/{id}`: single action row.
+- **Fix:** a provider account created or re-enabled at runtime now starts
+  syncing immediately. Its sync loop was never spawned until the next
+  restart, while Refresh / force-sync still answered ok. Force-sync's wake
+  signal now also reaches the loop thread-safely.
+- App startup/shutdown moved from `on_event` to a lifespan handler.
+
 ## 0.4.2 (2026-10-05)
 
 - **Gcore fleet adapter** (basic VMs across all projects/regions under one

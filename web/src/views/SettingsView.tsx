@@ -188,6 +188,10 @@ function ApiTokensPanel({ onToast }: { onToast: (m: string, s?: 'success' | 'err
         stored hashed — revoke anything you don't recognize. Usage:{' '}
         <code>Authorization: Bearer &lt;token&gt;</code>; interactive docs at{' '}
         <a href="/api/docs" target="_blank" rel="noreferrer">/api/docs</a>.
+        AI agents connect over MCP at <code>{location.origin}/mcp</code> with the same
+        header, e.g.{' '}
+        <code>claude mcp add --transport http omnicloud {location.origin}/mcp --header
+        "Authorization: Bearer &lt;token&gt;"</code>. A token carries its owner's role.
       </Typography>
       {created && (
         <Alert severity="success" icon={false}>

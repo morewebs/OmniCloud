@@ -415,21 +415,26 @@ class ActionBody(BaseModel):
     params: dict = {}
 
 
-@router.post("/servers/{account_id}/{provider_id}/actions")
-async def run_action(account_id: int, provider_id: str, body: ActionBody,
-                     user: auth.User = Depends(auth.require_admin)):
+def check_action(account_id: int, kind: str) -> None:
+    """Pre-flight shared by the REST route and the MCP action tools."""
     account = accounts.get_account(account_id)
     if not account:
         raise HTTPException(404, "no such account")
     adapter_cls = accounts.ADAPTERS.get(account["adapter"])
     try:
-        cap = Capability(body.kind)
+        cap = Capability(kind)
     except ValueError:
-        raise HTTPException(400, f"unknown action kind: {body.kind}")
+        raise HTTPException(400, f"unknown action kind: {kind}")
     if adapter_cls and cap not in adapter_cls.capabilities:
         # 409: capability absent from this adapter - rendered as absent in UI,
         # this check is for direct API users.
-        raise HTTPException(409, f"{account['adapter']} does not support {body.kind}")
+        raise HTTPException(409, f"{account['adapter']} does not support {kind}")
+
+
+@router.post("/servers/{account_id}/{provider_id}/actions")
+async def run_action(account_id: int, provider_id: str, body: ActionBody,
+                     user: auth.User = Depends(auth.require_admin)):
+    check_action(account_id, body.kind)
     action_id = await sync.run_action(account_id, provider_id, body.kind,
                                       user.id, body.params)
     with db.connect() as conn:
@@ -551,6 +556,21 @@ def list_actions(user: auth.User = Depends(auth.require_user)):
                ORDER BY a.id DESC LIMIT 100"""
         ).fetchall()
     return [dict(r) for r in rows]
+
+
+@router.get("/actions/{action_id}")
+def get_action(action_id: int, user: auth.User = Depends(auth.require_user)):
+    with db.connect() as conn:
+        row = conn.execute(
+            """SELECT a.id, a.account_id, a.provider_id, a.kind, a.status, a.detail,
+                      a.created_at, a.completed_at, u.username
+               FROM actions a LEFT JOIN users u ON u.id = a.requested_by
+               WHERE a.id=?""",
+            (action_id,),
+        ).fetchone()
+    if not row:
+        raise HTTPException(404, "no such action")
+    return dict(row)
 
 
 @router.get("/audit")

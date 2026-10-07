@@ -11,6 +11,7 @@ dependencies = [
     "uvicorn>=0.32",
     "httpx>=0.28",
     "cryptography>=44",
+    "mcp>=2.3",
 ]
 
 [build-system]

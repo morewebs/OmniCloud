@@ -74,7 +74,35 @@ ever displayed).
 - **API access:** every route the UI uses is a JSON API. Personal tokens
   (Settings → API tokens) authenticate as `Authorization: Bearer <token>` -
   same roles as your login, stored hashed, shown once, revocable. Interactive
-  docs at `/api/docs` (they require auth like everything else).
+  docs at `/api/docs` (they require auth like everything else). The same
+  tokens drive the [MCP server](docs/mcp.md) at `/mcp` for AI agents.
+
+## MCP server
+
+AI agents can drive the panel over the Model Context Protocol at `/mcp`
+(Streamable HTTP). This works with Claude Code or any MCP client that can
+send an `Authorization` header. Create a personal API token in Settings →
+API tokens, then:
+
+```bash
+claude mcp add --transport http omnicloud https://panel.example.net/mcp \
+  --header "Authorization: Bearer <token>"
+```
+
+- **Tools:** 44 of them cover the whole REST surface: fleet, allowances,
+  billing, catalog, orders, server actions, firewalls, accounts, users,
+  settings, audit and updates. There are also three prompts.
+- **Same rules as the REST API:** each tool calls the REST route it wraps,
+  so validation, audit records and error text are identical.
+- **Roles:** a token carries its owner's role. With a viewer token, the
+  admin tools answer `403: Admin role required`.
+- **Server actions:** they wait for the provider's confirmation. If that
+  takes longer than `wait_seconds`, they return `in_progress` with an
+  `action_id` to poll. They never report success before the provider confirms.
+
+A token can do everything its role can, so give agents a viewer token unless
+they need to operate. The full tool reference, auth details and client
+examples are in [docs/mcp.md](docs/mcp.md).
 
 ## Configuration
 
@@ -90,7 +118,7 @@ ever displayed).
 
 **Production:** see [DEPLOY.md](DEPLOY.md) — TLS, backups (DB + master key
 together), reverse proxy (SSE unbuffered, ≥960s read timeout for long server
-actions), Docker.
+actions, `/mcp` proxied like `/api`), Docker.
 
 ## Built-in updates
 

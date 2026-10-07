@@ -36,6 +36,13 @@ def test_env(monkeypatch):
         sync._loop = asyncio.get_running_loop()
     monkeypatch.setattr(sync, "start_all", _start_all_no_tasks)
     monkeypatch.setattr(catalog, "start", lambda: None)
+
+    # account create/enable spawn a per-account loop on the app loop: stub
+    # its body so no test syncs a provider in the background (tests that
+    # want the real loop re-enable it explicitly)
+    async def _no_sync_loop(account_id):
+        return None
+    monkeypatch.setattr(sync, "_sync_loop", _no_sync_loop)
     yield
     sync._loop = None
 

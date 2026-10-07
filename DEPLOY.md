@@ -55,12 +55,18 @@ location /api/ {
     proxy_pass http://127.0.0.1:8000;
     proxy_read_timeout 960s;   # server actions poll the provider up to ~15 min
 }
+location /mcp {
+    proxy_pass http://127.0.0.1:8000;
+    proxy_read_timeout 660s;   # action tools wait up to wait_seconds (max 600)
+}
 location / { proxy_pass http://127.0.0.1:8000; }
 ```
 
 `proxy_read_timeout 960s` matters: a rebuild/delete waits for the provider's
 own confirmation (up to 900s). A proxy that cuts at 60s returns a 502 to the
-operator while the action still completes server-side.
+operator while the action still completes server-side. `/mcp` answers plain
+JSON (no SSE stream to unbuffer); its action tools return `in_progress`
+after `wait_seconds` (default 50) and the agent polls `get_action`.
 
 ## Health check
 

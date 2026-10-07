@@ -17,6 +17,17 @@ Issues and PRs welcome. The short version:
 4. **No secrets in the repo.** No real company names, credentials, IPs, or
    customer data anywhere — code, fixtures, screenshots, or docs. Example
    data uses placeholder identifiers only (`srv-fsn1-01`, `203.0.113.x`).
+5. **The MCP server mirrors the REST API.**
+   - **New or changed `/api` route:** add or update its tool in
+     `server/mcp_server.py`.
+   - **How a tool works:** it calls the route function through `_call`,
+     never a copy of the route's logic, so the route's
+     `Depends(require_user / require_admin)` stays the only role check.
+     Server actions are the one exception: they go through
+     `_server_action`, which runs the same `api.check_action` pre-flight.
+   - **Docs and tests:** list the tool in `docs/mcp.md` and cover it in
+     `tests/test_mcp.py`. Browser-only routes (login, setup, the SSE
+     stream) are the exception; `docs/mcp.md` says which.
 
 ## Setup & checks
 

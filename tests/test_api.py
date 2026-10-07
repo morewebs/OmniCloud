@@ -5,10 +5,12 @@ import time
 import pytest
 from fastapi.testclient import TestClient
 
-from server import accounts
+from server import accounts, sync
 from server.main import create_app
 
 from conftest import TEST_TOKEN, FakeAdapter
+
+REAL_SYNC_LOOP = sync._sync_loop  # captured before conftest stubs it per test
 
 
 @pytest.fixture
@@ -284,6 +286,42 @@ def test_capabilities_409_for_absent(client, monkeypatch):
     r = client.post(f"/api/servers/{aid}/fake-1/actions", headers=HDRS,
                     json={"kind": "rebuild", "params": {"image": "x"}})
     assert r.status_code == 409
+
+
+def test_account_created_via_api_syncs_and_force_sync_wakes_it(client, monkeypatch):
+    """create / enable / force-sync are threadpool routes: the account's loop
+    must start and wake on the app loop. Off-loop _spawn used to return
+    early - a new account never synced until restart, force-sync said ok."""
+    monkeypatch.setattr(sync, "_sync_loop", REAL_SYNC_LOOP)
+    calls = []
+    real_list = FakeAdapter.list_servers
+
+    async def counted(self):
+        calls.append(1)
+        return await real_list(self)
+    monkeypatch.setattr(FakeAdapter, "list_servers", counted)
+
+    def eventually(cond):
+        deadline = time.monotonic() + 5
+        while not cond() and time.monotonic() < deadline:
+            time.sleep(0.05)
+        return cond()
+
+    _admin(client)
+    aid = client.post("/api/accounts", headers=HDRS, json={
+        "adapter": "fake", "name": "account-a7f3", "token": TEST_TOKEN}).json()["id"]
+    # the loop's first pass runs at once - no manual sync_account_now
+    assert eventually(lambda: len(calls) >= 1)
+    servers = [s for a in client.get("/api/fleet").json()["accounts"] for s in a["servers"]]
+    assert [s["provider_id"] for s in servers] == ["fake-1"]
+    # now asleep for its 5-minute interval: only force-sync can wake it
+    assert client.post(f"/api/accounts/{aid}/sync", headers=HDRS).status_code == 200
+    assert eventually(lambda: len(calls) >= 2)
+    # disable stops the loop; re-enable (also a threadpool route) restarts it
+    client.patch(f"/api/accounts/{aid}", headers=HDRS, json={"enabled": False})
+    assert client.post(f"/api/accounts/{aid}/sync", headers=HDRS).status_code == 409
+    client.patch(f"/api/accounts/{aid}", headers=HDRS, json={"enabled": True})
+    assert eventually(lambda: len(calls) >= 3)
 
 
 async def test_overview_spend_days_and_down_alerts(client, uid):

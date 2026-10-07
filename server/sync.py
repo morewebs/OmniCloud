@@ -33,16 +33,21 @@ def publish(event: str, data: dict | None = None) -> None:
     asyncio queue waiter futures from off-loop threads corrupts them - so
     when called from a thread (no running loop), hop onto the app loop.
     """
-    payload = json.dumps({"event": event, "data": data or {}})
+    _call_on_loop(_fanout, json.dumps({"event": event, "data": data or {}}))
+
+
+def _call_on_loop(fn, *args) -> None:
+    """Run fn on the app loop: directly when already on it, else hop via
+    call_soon_threadsafe (threadpool routes have no running loop). No app
+    loop (tests with start_all disabled): dropped."""
     try:
         on_loop = asyncio.get_running_loop() is _loop
     except RuntimeError:
         on_loop = False
-    if not on_loop:
-        if _loop is not None and _loop.is_running():
-            _loop.call_soon_threadsafe(_fanout, payload)
-        return
-    _fanout(payload)
+    if on_loop:
+        fn(*args)
+    elif _loop is not None and _loop.is_running():
+        _loop.call_soon_threadsafe(fn, *args)
 
 
 def _fanout(payload: str) -> None:
@@ -178,24 +183,20 @@ def start_all() -> None:
 
 
 def _spawn(account_id: int) -> None:
-    old = _tasks.get(account_id)
-    if old and not old.done():
-        old.cancel()
-    ev = asyncio.Event()
-    _sync_events[account_id] = ev
-    try:
-        asyncio.get_running_loop()
-    except RuntimeError:
-        return  # no loop (tests with start_all disabled) - nothing to spawn on
-    # threadpool routes (def endpoints) have no running loop: use the app loop.
-    if _loop is not None and _loop.is_running():
-        _loop.call_soon_threadsafe(
-            lambda: _tasks.__setitem__(
-                account_id, asyncio.create_task(_sync_loop(account_id), name=f"sync-{account_id}"))
-        )
-    else:
+    # registered now, so a force-sync right after create/enable finds it;
+    # the task itself starts on the app loop - create/enable are threadpool
+    # routes, and returning early there left new accounts unsynced until
+    # restart while force-sync still answered ok
+    _sync_events[account_id] = asyncio.Event()
+
+    def start() -> None:
+        old = _tasks.get(account_id)
+        if old and not old.done():
+            old.cancel()
         _tasks[account_id] = asyncio.create_task(
             _sync_loop(account_id), name=f"sync-{account_id}")
+
+    _call_on_loop(start)
 
 
 def restart_account(account_id: int) -> None:
@@ -227,7 +228,9 @@ def request_sync(account_id: int) -> bool:
     pretending a refresh happened."""
     ev = _sync_events.get(account_id)
     if ev:
-        ev.set()
+        # Event.set resolves the loop's waiter future - app loop only
+        # (force-sync is a threadpool route)
+        _call_on_loop(ev.set)
         return True
     return False
 
@@ -237,6 +240,16 @@ def request_sync(account_id: int) -> bool:
 async def run_action(account_id: int, provider_id: str, kind: str,
                      user_id: int, params: dict) -> int:
     """Insert in_progress row, run, record outcome + audit + force sync."""
+    action_id, before = begin_action(account_id, provider_id, kind, user_id)
+    return await finish_action(action_id, account_id, provider_id, kind,
+                               user_id, params, before)
+
+
+def begin_action(account_id: int, provider_id: str, kind: str,
+                 user_id: int) -> tuple[int, dict | None]:
+    """Insert the in_progress row; returns (action_id, before-state). Split
+    from finish_action so a caller that can't hold a request open for the
+    whole confirm loop (MCP) can hand back the id and let it finish."""
     with db.connect() as conn:
         row = conn.execute(
             "SELECT canonical FROM servers WHERE account_id=? AND provider_id=?",
@@ -251,6 +264,12 @@ async def run_action(account_id: int, provider_id: str, kind: str,
         action_id = cur.lastrowid
 
     publish("action", {"account_id": account_id, "kind": kind, "status": "in_progress"})
+    return action_id, before
+
+
+async def finish_action(action_id: int, account_id: int, provider_id: str, kind: str,
+                        user_id: int, params: dict, before: dict | None) -> int:
+    """Run the adapter action, record outcome + audit + force sync."""
     try:
         account = accounts.get_account(account_id)
         if not account:

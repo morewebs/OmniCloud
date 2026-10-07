@@ -29,6 +29,21 @@ an install as critical infrastructure:
   skip the CSRF header check — no cookie is attached, so there is nothing
   to forge. A leaked token is high-severity: revoke it in Settings → API
   tokens.
+- **MCP endpoint** (`/mcp`): accepts personal API tokens only, as
+  `Authorization: Bearer`. Session cookies are refused there, so it has no
+  CSRF surface.
+  - **Checked first:** the token is verified before any MCP message is
+    parsed (no token means `401`), and again on every tool call.
+  - **Same roles as REST:** each tool runs the REST route it wraps,
+    including that route's role check, so a viewer token cannot reach a
+    mutating path through MCP.
+  - **Same secret rules:** provider tokens are never returned by a tool,
+    the same as `/api`.
+  - **No Host/Origin allowlist:** the SDK's DNS-rebinding check is off,
+    because it would reject every deployed hostname. A rebound browser
+    holds no Bearer token.
+  - **Reportable:** any MCP path that reaches a mutation without an admin
+    token, or that returns a secret, is high-severity.
 
 ## Hardening checklist for operators
 
@@ -37,3 +52,6 @@ an install as critical infrastructure:
 3. Restrict network exposure — the panel needs no inbound port beyond your
    reverse proxy.
 4. Update promptly (Settings → Panel update, or see DEPLOY.md).
+5. Give AI agents (MCP clients) **viewer** tokens unless they must
+   operate. An admin token lets the agent rebuild and delete servers. Use
+   one token per agent so each can be revoked on its own.

@@ -1,7 +1,8 @@
-"""FastAPI app: lifespan (DB init + sync tasks), REST API, SPA static serving."""
+"""FastAPI app: lifespan (DB init + sync tasks), REST API, MCP, SPA static serving."""
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import logging.config
 from pathlib import Path
@@ -9,8 +10,9 @@ from pathlib import Path
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from starlette.responses import FileResponse
+from starlette.routing import Route
 
-from . import api, catalog, config, db, sync
+from . import api, catalog, config, db, mcp_server, sync
 
 STATIC = Path(__file__).resolve().parent / "static"
 
@@ -18,21 +20,8 @@ log = logging.getLogger("omnicloud.app")
 
 
 def create_app() -> FastAPI:
-    # /api/docs: interactive API explorer. Endpoints still require auth
-    # (session cookie or Bearer token) - the schema discloses nothing that
-    # isn't already in the open-source codebase.
-    app = FastAPI(title="OmniCloud", docs_url="/api/docs", redoc_url=None,
-                  openapi_url="/api/openapi.json")
-    app.include_router(api.router)
-    app.middleware("http")(api.enforce_csrf)
+    mcp_endpoint, mcp_manager = mcp_server.http_app()
 
-    # unhandled errors: JSON envelope (the SPA expects {detail}), never a stack
-    @app.exception_handler(Exception)
-    async def unhandled(request: Request, exc: Exception):
-        log.exception("unhandled error on %s %s", request.method, request.url.path)
-        return JSONResponse(status_code=500, content={"detail": "Internal error - see server logs"})
-
-    @app.on_event("startup")
     async def _startup() -> None:
         db.init()
         # crash/restart recovery: anything still in-flight died with the last
@@ -64,7 +53,6 @@ def create_app() -> FastAPI:
         catalog.start()
         log.info("startup complete")
 
-    @app.on_event("shutdown")
     async def _shutdown() -> None:
         log.info("shutting down: stopping background tasks")
         sync.stop_all()
@@ -75,6 +63,31 @@ def create_app() -> FastAPI:
         if pending:
             await asyncio.wait(pending, timeout=5)
         log.info("shutdown complete")
+
+    @contextlib.asynccontextmanager
+    async def lifespan(app: FastAPI):
+        await _startup()
+        # the MCP session manager's task group must run for the app's lifetime
+        async with mcp_manager.run():
+            yield
+        await _shutdown()
+
+    # /api/docs: interactive API explorer. Endpoints still require auth
+    # (session cookie or Bearer token) - the schema discloses nothing that
+    # isn't already in the open-source codebase.
+    app = FastAPI(title="OmniCloud", docs_url="/api/docs", redoc_url=None,
+                  openapi_url="/api/openapi.json", lifespan=lifespan)
+    app.include_router(api.router)
+    app.middleware("http")(api.enforce_csrf)
+    # MCP (Streamable HTTP): Bearer API tokens only, outside /api so the
+    # cookie CSRF middleware never applies. Before the SPA catch-all.
+    app.router.routes.append(Route("/mcp", endpoint=mcp_endpoint))
+
+    # unhandled errors: JSON envelope (the SPA expects {detail}), never a stack
+    @app.exception_handler(Exception)
+    async def unhandled(request: Request, exc: Exception):
+        log.exception("unhandled error on %s %s", request.method, request.url.path)
+        return JSONResponse(status_code=500, content={"detail": "Internal error - see server logs"})
 
     # SPA: serve built frontend, fall back to index.html for client routes.
     if STATIC.exists():
@@ -109,6 +122,5 @@ def _configure_logging() -> None:
     })
 
 
-# Deprecated-style lifespan below kept minimal; on_event is fine for v1.
 _configure_logging()
 app = create_app()

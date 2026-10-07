@@ -47,24 +47,29 @@ uv run python demo_server.py          # http://localhost:8080, no login
 ```
 
 First visit shows a one-time setup screen that creates the first admin
-account. Add provider accounts under Credentials (API tokens are stored
-Fernet-encrypted with `OMNICLOUD_MASTER_KEY`; only the last 4 characters are
-ever displayed).
+account. Add provider accounts under Credentials - each provider's form
+asks for what its API needs (an API token; a username + password for
+panels without tokens: Gcore Hosting, Tube-hosting). Credentials are stored
+Fernet-encrypted with `OMNICLOUD_MASTER_KEY`; only the last 4 characters of
+the token or login name are ever displayed, never a password.
 
 ## How it works
 
 - **Adapters** map each provider API onto canonical entities
-  (`Server`, `Allowance`, `Money`, `Facet`, `Plan`). The UI renders only
-  canonical entities - adding a provider adds zero new UI patterns.
-- **Capabilities** (power, rename, rebuild, firewall, delete...) are declared
-  per adapter. A capability an adapter lacks is absent from the UI, never a
-  disabled button.
+  (`Server`, `IpAddress`, `Allowance`, `Money`, `Facet`, `Plan`, `Billing`,
+  `Invoice`). The UI renders only canonical entities - adding a provider
+  adds zero new UI patterns.
+- **Capabilities** (power, rename, rebuild, firewall, delete, root
+  password, IP add/release/change...) are declared per adapter. A
+  capability an adapter lacks is absent from the UI, never a disabled
+  button.
 - **Plan marketplace:** every provider's plans with prices, included
   traffic, and extra-IP cost - live from public APIs where one exists
   (OVH order catalog, Gcore public API, Tube-hosting's pricing asset),
   otherwise curated with a visible source badge. Compare plans across
-  providers and place orders (prototype pipeline: simulated execution,
-  clearly labeled; the `mode` column is the go-live flip).
+  providers and order: an order bound to an account with purchases on is
+  **real** (Hetzner, LeaseWeb; OVH as an unpaid order you pay at OVH's
+  link), otherwise a clearly labeled prototype that creates nothing.
 - **Data honesty:** a value the provider API does not expose reads
   *not exposed*; a momentarily missing value reads *-*. Neither is ever zero.
   A `202 Accepted` from a provider is never success - actions complete only
@@ -80,14 +85,29 @@ ever displayed).
   state.
 - **API access:** every route the UI uses is a JSON API. Personal tokens
   (Settings → API tokens) authenticate as `Authorization: Bearer <token>` -
-  same roles as your login, stored hashed, shown once, revocable. Interactive
-  docs at `/api/docs` (they require auth like everything else).
+  stored hashed, shown once, revocable. Scope **Full** carries your role;
+  scope **IP change only** reaches nothing but the IP-change API (the token
+  a remote rotation script should hold). Interactive docs at `/api/docs`
+  (they require auth like everything else).
+- **IP change:** `POST /api/ips/{ip}/change` swaps one of a server's extra
+  IPs for a fresh one and returns it; the primary IP is never touched.
+  Testing the new address is the caller's job - see
+  [docs/ip-change.md](docs/ip-change.md).
+- **Billing:** each account's balance, invoices (due date, open amount, the
+  provider's own status), unpaid orders with pay links and renewals,
+  refreshed hourly; the Overview flags overdue invoices, unpaid orders,
+  renewals without auto-renew and low balances. Hetzner and Gcore Cloud
+  expose no billing API - those read *not exposed*.
+- **Purchases are opt-in per account** (Credentials → Purchases, off by
+  default): IP changes/adds and real server orders spend money only on
+  accounts where an admin switched it on, each behind a typed confirm in
+  the UI and a per-account daily IP cap (Settings).
 
 ## Configuration
 
 | Env var | Purpose | Default |
 |---|---|---|
-| `OMNICLOUD_MASTER_KEY` | Fernet key encrypting provider tokens | required for credentials |
+| `OMNICLOUD_MASTER_KEY` | Fernet key encrypting provider credentials | required for credentials |
 | `OMNICLOUD_DB` | SQLite database path | `./omnicloud.db` |
 | `OMNICLOUD_SESSION_TTL_DAYS` | Session lifetime | 30 |
 | `OMNICLOUD_SYNC_INTERVAL_MIN` | Default sync interval (minutes) | 5 |

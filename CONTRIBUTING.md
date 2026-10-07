@@ -18,6 +18,12 @@ Issues and PRs welcome. The short version:
    customer data anywhere — code, fixtures, screenshots, or docs. Example
    data uses placeholder identifiers only (`srv-fsn1-01`, `203.0.113.x`).
 
+5. **Money is sent once.** Any provider call that buys something (an IP,
+   a server) uses `request(..., retry=False)` and confirms the result on
+   the provider's own view; an order left unpaid raises `PaymentRequired`,
+   never success. Capabilities are an explicit set per adapter (never
+   `frozenset(Capability)`), so a new capability is opt-in.
+
 ## Setup & checks
 
 ```bash

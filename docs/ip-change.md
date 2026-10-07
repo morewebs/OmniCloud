@@ -8,7 +8,7 @@ Each server keeps one **primary** IP, which this API never touches. Only the ext
 
 1. **Credentials → the provider account → Purchases: on.** A change buys an IP, and accounts start with purchases off.
 2. **Settings → API tokens → New token, scope `ip_change`.** Create it as an admin, because changing an IP spends money. A token with this scope can reach only the three endpoints below, so a leaked one can't delete servers or read billing.
-3. Optional: **Settings → `ip_change_daily_cap`** (default 10 per account per 24 h). Every add or change attempt counts, whatever its outcome, so a script stuck in a loop stops at the cap.
+3. Optional: **Settings → IP acquisitions per 24 h** (default 10 per account). Every add or change attempt counts, whatever its outcome, so a script stuck in a loop stops at the cap.
 
 ## Endpoints
 

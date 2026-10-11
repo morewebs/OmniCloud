@@ -84,13 +84,17 @@ async def test_role_carries_across_a_swap(client, monkeypatch):
     res = client.post(f"/api/ips/{EXTRA}/change", headers=b).json()
     assert res["new_ip"] == "203.0.113.30" and res["old_released"] is True
 
-    # the role followed the swap without anyone re-assigning it
-    got = client.get(f"/api/servers/{aid}/{PID}/roles/grpc-entry", headers=HDRS).json()
-    assert got["address"] == "203.0.113.30"
+    # the script's own view: describe() carries the role on the new IP
     info = client.get("/api/ips/203.0.113.30", headers=b).json()
     assert info["role"] == "grpc-entry"
-    # and the old address no longer claims it
     assert client.get(f"/api/ips/{EXTRA}", headers=b).status_code == 404
+
+    # and the admin view agrees: the role row itself moved
+    client.post("/api/auth/login", headers=HDRS,
+                json={"username": "admin", "password": "pw123456"})
+    got = client.get(f"/api/servers/{aid}/{PID}/roles/grpc-entry",
+                     headers=HDRS).json()
+    assert got == {"role": "grpc-entry", "address": "203.0.113.30"}
 
 
 async def test_role_cannot_name_a_foreign_address(client, monkeypatch):

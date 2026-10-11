@@ -19,6 +19,9 @@ web/dist/
 # built SPA (rebuild with: cd web && npm run build)
 server/static/
 
+# built GitHub Pages site (rebuild with: python site/build.py)
+site/dist/
+
 # editor
 .vscode/
 .idea/

@@ -1,0 +1,6 @@
+# Pinned renderer for the GitHub Pages build. Not a panel dependency:
+# site/build.py adds nothing to pyproject.toml, and CI installs this file
+# into a throwaway environment.
+markdown-it-py==3.0.0
+mdit-py-plugins==0.4.2
+mdurl==0.1.2

@@ -156,6 +156,13 @@ is your supervisor's job (Docker `--restart`, systemd, or a loop script) —
 the panel exits with code **78** after applying; see DEPLOY.md for each
 setup's restart line.
 
+## Site
+
+The public site is built from this README, DEPLOY, SECURITY, CONTRIBUTING,
+CHANGELOG, and `docs/ip-change.md` and `docs/mcp.md`. GitHub Actions runs
+`python site/build.py` and publishes the result; nothing is rendered in the
+browser. Enable it once under Settings → Pages → Source: GitHub Actions.
+
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) — provider facts need citations

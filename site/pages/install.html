@@ -1,0 +1,32 @@
+  <section class="lede">
+    <h1>Three ways in.</h1>
+    <p>The demo needs nothing. Docker and a local checkout need a master key, which encrypts the provider credentials you add later. Production — TLS, backups, the reverse proxy — is in <a href="../deploy/">Deploy</a>, not repeated here.</p>
+  </section>
+
+  <h2>Demo</h2>
+  <p>The real interface, mock data, no login. Python 3.12 and <a href="https://docs.astral.sh/uv/">uv</a>.</p>
+  <pre class="prompt"><code>uv run python demo_server.py</code></pre>
+  <p class="caption">Open <span class="mono">http://localhost:8080</span>.</p>
+
+  <h2>Docker</h2>
+  <p>One process, the database and the master key on a volume you back up together. Losing the key loses every stored credential.</p>
+  <pre class="prompt"><code>docker build -t omnicloud .
+docker run -d -p 8000:8000 \
+  -v omnicloud-data:/data \
+  -e OMNICLOUD_MASTER_KEY=<key> \
+  omnicloud</code></pre>
+  <p class="caption">Generate the key the same way as the checkout below, and keep it: the container stores the database at <span class="mono">/data/omnicloud.db</span> and cannot read it without the key. The first visit creates the admin account and then closes forever.</p>
+
+  <h2>From a checkout</h2>
+  <pre class="prompt"><code>uv sync
+export OMNICLOUD_MASTER_KEY=$(uv run python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())")
+cd web && npm install && npm run build && cd ..
+uv run uvicorn server.main:app --port 8000</code></pre>
+  <p class="caption">Open <span class="mono">http://localhost:8000</span>. For day-to-day development the frontend runs separately on port 5173 and proxies the API; the <a href="../guide/">guide</a> has that command.</p>
+
+  <h2>Then</h2>
+  <ol class="steps">
+    <li>Add a provider account under Credentials. The form asks for what that provider's API needs, and only the last four characters are ever shown again.</li>
+    <li>Leave Purchases off until you mean to spend money. IP changes and real orders do nothing on an account where it is off.</li>
+    <li>Read <a href="../deploy/">Deploy</a> before this faces a network, and <a href="../security/">Security</a> for how to report a problem.</li>
+  </ol>

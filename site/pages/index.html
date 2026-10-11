@@ -1,0 +1,77 @@
+  <section class="lede">
+    <h1>One panel for every provider you already pay.</h1>
+    <p>OmniCloud aggregates server fleets, traffic allowances, billing, and a plan marketplace across cloud providers, behind one data model. The first question on the page is whether anything is down, and what this month will cost.</p>
+    <p class="actions">
+      <a class="button" href="install/">Install</a>
+      <a class="button quiet" href="guide/">Read the guide</a>
+    </p>
+  </section>
+
+  <div class="fleet">
+    <table>
+      <thead>
+        <tr>
+          <th>Status</th>
+          <th>Server</th>
+          <th>Provider</th>
+          <th>Region</th>
+          <th>Out this month</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><span class="status running"><i></i>Running</span></td>
+          <td class="mono">srv-fsn1-01</td>
+          <td>Hetzner</td>
+          <td class="mono">fsn1</td>
+          <td class="num">1.2 TB</td>
+        </tr>
+        <tr>
+          <td><span class="status down"><i></i>Down</span></td>
+          <td class="mono">srv-ams-02</td>
+          <td>LeaseWeb</td>
+          <td class="mono">ams</td>
+          <td class="num">not exposed</td>
+        </tr>
+        <tr>
+          <td><span class="status off"><i></i>Off</span></td>
+          <td class="mono">srv-gra-03</td>
+          <td>OVHcloud</td>
+          <td class="mono">gra</td>
+          <td class="num">—</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="caption">Placeholder fleet. A value the provider does not expose reads <span class="mono">not exposed</span>; a value missing this moment reads —. Neither is ever zero.</p>
+
+  <h2>How the panel stays one panel</h2>
+  <ul class="points">
+    <li><strong>One model.</strong> Each provider adapter maps its API onto the same entities — server, address, allowance, invoice — and the interface renders only those. Adding a provider adds no new screens. <a href="guide/">The guide</a> lists the eight.</li>
+    <li><strong>Absent, not disabled.</strong> An action an adapter cannot do is missing from the row, never a greyed-out button.</li>
+    <li><strong>Nothing is invented.</strong> The panel never guesses a billing model, and it never reports an action done because a provider answered 202. It waits until the provider's own view confirms the change.</li>
+    <li><strong>The same routes, for scripts.</strong> Personal tokens reach the JSON API. A token scoped to IP change can swap one extra address and nothing else. <a href="mcp/">Agents</a> drive the same routes over MCP.</li>
+  </ul>
+
+  <h2>Providers</h2>
+  <table class="providers">
+    <thead>
+      <tr><th>Provider</th><th>Fleet</th><th>Plans</th><th>IP change</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Hetzner Cloud</td><td>Yes</td><td>Live</td><td>Yes</td></tr>
+      <tr><td>LeaseWeb</td><td>Yes</td><td>Live</td><td>No</td></tr>
+      <tr><td>OVHcloud</td><td>VPS and Public Cloud</td><td>Live</td><td>Yes</td></tr>
+      <tr><td>Gcore Cloud</td><td>Yes</td><td>Live</td><td>Yes</td></tr>
+      <tr><td>Gcore Hosting</td><td>Yes</td><td>No</td><td>Yes</td></tr>
+      <tr><td>Netlen</td><td>Yes</td><td>Curated prices</td><td>No</td></tr>
+      <tr><td>Tube-hosting</td><td>Yes</td><td>Live</td><td>No</td></tr>
+      <tr><td>LightNode</td><td>Yes</td><td>Curated prices</td><td>No</td></tr>
+    </tbody>
+  </table>
+  <p class="caption">Real orders are opt-in per account, and off by default. Hetzner and Gcore Cloud expose no billing API, so those accounts read <span class="mono">not exposed</span>.</p>
+
+  <h2>Look around before you install</h2>
+  <p>A demo runs the real interface on mock data — 200 servers, orders, billing, one of them down — with no login and no provider account.</p>
+  <pre class="prompt"><code>uv run python demo_server.py</code></pre>
+  <p class="caption">Then open <span class="mono">http://localhost:8080</span>. The <a href="install/">install page</a> has the other two ways in.</p>

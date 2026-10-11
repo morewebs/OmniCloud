@@ -20,7 +20,7 @@ import json
 import time
 from datetime import datetime, timedelta, timezone
 
-from . import accounts, audit, db
+from . import accounts, audit, db, roles
 from .adapters.base import (ActionTimeout, AdapterError, Capability, IpAddress, IpCost,
                             PaymentRequired)
 
@@ -209,7 +209,9 @@ async def describe(address: str) -> dict:
         "cost": cost.model_dump(mode="json") if cost else None,
         "acquisitions_last_24h": acquisitions_last_24h(account["id"]),
         "daily_cap": daily_cap(account["id"]),
-        "ips": server.get("ips") or [],
+        "role": roles.role_of(address)["role"] if roles.role_of(address) else None,
+        "ips": roles.annotate(server.get("ips") or [], account["id"],
+                              server["provider_id"]),
     }
 
 
@@ -287,6 +289,8 @@ async def _change_locked(account: dict, server: dict, old: str, user_id: int,
                 audit.record(user_id, "ip.change",
                              f"{account['adapter']}/{account['name']}/{pid}",
                              before={"ip": old}, after={"ip": new.address, "old_still_attached": old})
+                with contextlib.suppress(Exception):
+                    roles.carry(account["id"], pid, old, new.address)
                 outcome = "done"
                 return result
             if isinstance(e, ActionTimeout):
@@ -308,6 +312,8 @@ async def _change_locked(account: dict, server: dict, old: str, user_id: int,
         audit.record(user_id, "ip.change",
                      f"{account['adapter']}/{account['name']}/{pid}",
                      before={"ip": old}, after={"ip": new.address})
+        with contextlib.suppress(Exception):
+            roles.carry(account["id"], pid, old, new.address)
         outcome = "done"
         return result
     except AdapterError as e:

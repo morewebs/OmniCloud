@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 
 from . import config
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS users (
@@ -149,13 +149,22 @@ CREATE TABLE IF NOT EXISTS api_tokens (
     created_at TEXT NOT NULL,
     last_used_at TEXT
 );
+CREATE TABLE IF NOT EXISTS ip_roles (
+    address TEXT PRIMARY KEY,          -- the current address of a role (re-keyed on every swap)
+    account_id INTEGER NOT NULL REFERENCES accounts(id),
+    provider_id TEXT NOT NULL,
+    role TEXT NOT NULL,                -- operator's word: "awgbk-secondary", "grpc-entry", ...
+    set_by INTEGER REFERENCES users(id),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS billing_snapshots (
     account_id INTEGER PRIMARY KEY REFERENCES accounts(id) ON DELETE CASCADE,
     canonical TEXT,
     fetched_at TEXT,
     last_error TEXT
 );
-INSERT OR IGNORE INTO settings(key, value) VALUES ('schema_version', '4');
+INSERT OR IGNORE INTO settings(key, value) VALUES ('schema_version', '5');
 """
 
 
@@ -196,6 +205,17 @@ def init() -> None:
         version = int(row[0]) if row else SCHEMA_VERSION
     if version < 4:
         _migrate_v4()
+    if version < 5:
+        _migrate_v5()
+
+
+def _migrate_v5() -> None:
+    """IP roles: operator labels for a server's extra IPs that survive a
+    swap. Purely additive (one new table), so CREATE IF NOT EXISTS is the
+    whole migration."""
+    with closing(sqlite3.connect(config.DB_PATH, timeout=10, isolation_level=None)) as conn:
+        conn.executescript(SCHEMA)
+        conn.execute("UPDATE settings SET value='5' WHERE key='schema_version'")
 
 
 # v3 -> v4 additive columns: (table, column, DDL)

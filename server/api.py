@@ -10,8 +10,8 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from . import (accounts, audit, auth, billing, catalog, config, db, ips, orders, secrets,
-               sync, update, version)
+from . import (accounts, audit, auth, billing, catalog, config, db, ips, orders, roles,
+               secrets, sync, update, version)
 from .adapters.base import Capability
 
 router = APIRouter(prefix="/api")
@@ -541,6 +541,43 @@ async def ip_release(account_id: int, provider_id: str, address: str,
         return await ips.release(account_id, provider_id, address, user.id)
     except ips.IpError as e:
         raise _ip_http(e)
+
+
+class RoleBody(BaseModel):
+    role: str
+    address: str
+
+
+@router.get("/roles")
+async def list_roles(user: auth.User = Depends(auth.require_user)):
+    return {"roles": roles.list_roles()}
+
+
+@router.put("/servers/{account_id}/{provider_id}/roles")
+async def set_role(account_id: int, provider_id: str, body: RoleBody,
+                   user: auth.User = Depends(auth.require_admin)):
+    """Point a role at an address. The address must be one of this server's
+    current IPs (the synced cache is the truth; a role may not name an
+    address the provider does not have)."""
+    with db.connect() as conn:
+        row = conn.execute("SELECT canonical FROM servers WHERE account_id=? AND provider_id=?",
+                           (account_id, provider_id)).fetchone()
+    if row is None:
+        raise HTTPException(404, "no such server")
+    server = json.loads(row["canonical"])
+    owned = {ip.get("address") for ip in server.get("ips") or []} | {server.get("ipv4")}
+    if body.address not in owned:
+        raise HTTPException(409, f"{body.address} is not one of this server's addresses")
+    return roles.assign(account_id, provider_id, body.role, body.address, user.id)
+
+
+@router.get("/servers/{account_id}/{provider_id}/roles/{role}")
+async def get_role(account_id: int, provider_id: str, role: str,
+                   user: auth.User = Depends(auth.require_user)):
+    address = roles.address_of(account_id, provider_id, role)
+    if address is None:
+        raise HTTPException(404, f"no role '{role}' on this server")
+    return {"role": role, "address": address}
 
 
 class FirewallBody(BaseModel):

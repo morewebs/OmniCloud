@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 
 from . import config
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS users (
@@ -164,7 +164,46 @@ CREATE TABLE IF NOT EXISTS billing_snapshots (
     fetched_at TEXT,
     last_error TEXT
 );
-INSERT OR IGNORE INTO settings(key, value) VALUES ('schema_version', '5');
+-- Traffic-allowance webhook hooks (schema 6): POST an HTTP API when a
+-- server's traffic allowance crosses a threshold. Delivery history and the
+-- per-(hook, server) armed level (hysteresis: fire once per upward crossing)
+-- live beside them.
+CREATE TABLE IF NOT EXISTS traffic_hooks (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL,
+    url TEXT NOT NULL,
+    events TEXT NOT NULL DEFAULT '["warn","over"]',  -- JSON list of warn|over
+    warn_pct REAL NOT NULL DEFAULT 80,
+    adapter TEXT,
+    account_id INTEGER REFERENCES accounts(id) ON DELETE CASCADE,
+    provider_id TEXT,
+    headers TEXT,   -- JSON object; values are secrets, never returned by the API
+    extra TEXT,     -- JSON object merged into the delivered payload
+    enabled INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS hook_deliveries (
+    id INTEGER PRIMARY KEY,
+    hook_id INTEGER NOT NULL REFERENCES traffic_hooks(id) ON DELETE CASCADE,
+    event TEXT NOT NULL,          -- warn | over | test
+    account_id INTEGER NOT NULL,
+    provider_id TEXT NOT NULL,
+    server_name TEXT,
+    status TEXT NOT NULL CHECK(status IN ('delivered','failed')),
+    response_status INTEGER,
+    error TEXT,
+    created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS hook_armed (
+    hook_id INTEGER NOT NULL REFERENCES traffic_hooks(id) ON DELETE CASCADE,
+    account_id INTEGER NOT NULL,
+    provider_id TEXT NOT NULL,
+    level TEXT NOT NULL DEFAULT 'none',  -- highest level fired and delivered
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (hook_id, account_id, provider_id)
+);
+INSERT OR IGNORE INTO settings(key, value) VALUES ('schema_version', '6');
 """
 
 
@@ -207,6 +246,16 @@ def init() -> None:
         _migrate_v4()
     if version < 5:
         _migrate_v5()
+    if version < 6:
+        _migrate_v6()
+
+
+def _migrate_v6() -> None:
+    """Traffic-allowance hooks. Purely additive (three new tables), so
+    CREATE IF NOT EXISTS is the whole migration."""
+    with closing(sqlite3.connect(config.DB_PATH, timeout=10, isolation_level=None)) as conn:
+        conn.executescript(SCHEMA)
+        conn.execute("UPDATE settings SET value='6' WHERE key='schema_version'")
 
 
 def _migrate_v5() -> None:

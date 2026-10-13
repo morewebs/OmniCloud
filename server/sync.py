@@ -104,6 +104,10 @@ async def _sync_once(account: dict, adapter: ProviderAdapter) -> list[dict]:
             (ts, ts, account["id"]),
         )
     publish("servers_updated", {"account_id": account["id"]})
+    # traffic-allowance hooks ride the same fresh rows; their failures are
+    # logged as deliveries, never a sync error (same posture as billing)
+    from . import hooks
+    await hooks.after_sync(rows)
     return rows
 
 

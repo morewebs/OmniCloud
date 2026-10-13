@@ -219,13 +219,16 @@ async def _loop() -> None:
 
 
 def _sweep() -> None:
-    """Retention: 400 days of traffic history, 180 days of finished actions.
-    Orders/audit keep forever (they are the operator's legal trail)."""
+    """Retention: 400 days of traffic history, 180 days of finished actions
+    and hook deliveries. Orders/audit keep forever (they are the operator's
+    legal trail)."""
     with contextlib.suppress(Exception):
         with db.connect() as conn:
             conn.execute("DELETE FROM traffic_history WHERE day < date('now', '-400 days')")
             conn.execute("DELETE FROM actions WHERE status != 'in_progress' "
                          "AND created_at < datetime('now', '-180 days')")
+            conn.execute("DELETE FROM hook_deliveries "
+                         "WHERE created_at < datetime('now', '-180 days')")
             log.info("retention sweep done")
 
 

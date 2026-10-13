@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.7.0 (2026-10-13)
+
+- **Traffic-allowance hooks**: the panel POSTs any HTTP API of yours
+  when a server's traffic allowance crosses a threshold. Per hook: warn
+  % (default 80) and/or the 100% crossing, optional provider/account/
+  server filters, custom headers (e.g. `Authorization`; secret - stored
+  and sent, never returned) and an `extra` JSON object merged into the
+  payload. Evaluated on every sync; level-based hysteresis fires once
+  per upward crossing and re-arms when usage drops back below (a new
+  billing window re-fires naturally). A failed delivery retries on the
+  next sync instead of arming. Payload: `{event: allowance_warn |
+  allowance_over, hook, fired_at, server {account_id, provider_id,
+  name, adapter, ipv4}, allowance {used_bytes, included_bytes, pct,
+  counting, window, ...}}` plus `extra`. Test button (event `test`)
+  sends one real POST without arming; every attempt lands in a delivery
+  log (event, server, HTTP status, error), swept after 180 days.
+  Admin REST under `/api/hooks` + 6 MCP tools (`list_hooks`,
+  `create_hook`, `update_hook`, `delete_hook`, `test_hook`,
+  `list_hook_deliveries`) + a Settings panel. Schema 6 (additive
+  migration).
+
+## 0.6.0 (2026-10-11)
+
+- **IP roles**: operator labels for a server's extra IPs that survive a
+  swap (schema 5). The IP-change loops pin by role (`awgbk-secondary`,
+  `grpc-entry`) instead of list order; a swap re-keys the role
+  automatically. `GET/PUT` role API on servers.
+
 ## 0.5.0 (2026-10-07)
 
 - **`ip_read` token scope**: reaches only `GET /api/ips/{ip}` (and

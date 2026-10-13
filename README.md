@@ -104,6 +104,10 @@ the token or login name are ever displayed, never a password.
   default): IP changes/adds and real server orders spend money only on
   accounts where an admin switched it on, each behind a typed confirm in
   the UI and a per-account daily IP cap (Settings).
+- **Traffic-allowance hooks** (Settings → Traffic hooks): POST your own
+  HTTP API when any server's traffic allowance crosses a threshold (warn
+  %, 100%), with filters, custom headers and an extra-JSON merge into the
+  payload; fired once per crossing, with a test button and a delivery log.
 
 ## MCP server
 
@@ -117,9 +121,10 @@ claude mcp add --transport http omnicloud https://panel.example.net/mcp \
   --header "Authorization: Bearer <token>"
 ```
 
-- **Tools:** 50 of them cover the whole REST surface: fleet, allowances,
+- **Tools:** 56 of them cover the whole REST surface: fleet, allowances,
   billing, catalog, orders, server actions, IPs, firewalls, accounts,
-  users, settings, audit and updates. There are also three prompts.
+  traffic hooks, users, settings, audit and updates. There are also three
+  prompts.
 - **Same rules as the REST API:** each tool calls the REST route it wraps,
   so validation, audit records and error text are identical.
 - **Roles:** a token carries its owner's role. With a viewer token, the

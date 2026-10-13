@@ -204,6 +204,37 @@ entering credentials in the web UI keeps them out of the conversation.
 | `update_settings` | admin | `settings` | Write settings (keys must start with `sync_`, `update_`, `ip_` or `billing_`) |
 | `list_audit_log` | admin | | The 200 most recent mutations, with before/after state |
 
+### Traffic hooks
+
+Webhooks the panel POSTs when a server's traffic allowance crosses a
+threshold (warn % and/or 100%). They fire from the sync loop, once per
+upward crossing, and re-arm when usage drops back below.
+
+| Tool | Role | Arguments | What it does |
+|---|---|---|---|
+| `list_hooks` | admin | | Hooks with URL, events, warn %, filters, enabled, last delivery (header values never come back) |
+| `create_hook` | admin | `name`, `url`, `events?`, `warn_pct?`, `adapter?`, `account_id?`, `provider_id?`, `headers?`, `extra?` | Create a hook; `headers` (e.g. `Authorization`) are secret and `extra` is merged into the payload |
+| `update_hook` | admin | `hook_id`, + any create field, `enabled?` | Partial update; absent keys keep their value, `{}`/empty clears a filter |
+| `delete_hook` | admin | `hook_id` | IRREVERSIBLE: delete the hook and its delivery history |
+| `test_hook` | admin | `hook_id` | One real POST with event `test` (never arms, repeatable) |
+| `list_hook_deliveries` | admin | `hook_id?`, `limit?` | Delivery log: event, server, delivered/failed, HTTP status, error |
+
+Delivered payload (`event` is `allowance_warn`, `allowance_over` or
+`test`; the `extra` object's keys win over built-ins):
+
+```json
+{
+  "event": "allowance_over",
+  "hook": {"id": 1, "name": "ops"},
+  "fired_at": "2026-10-13T18:20:01+00:00",
+  "server": {"account_id": 1, "provider_id": "srv-1", "name": "web-1",
+             "adapter": "hetzner", "ipv4": "203.0.113.10"},
+  "allowance": {"used_bytes": 27182818284000, "included_bytes": 21990000000000,
+                "pct": 123.6, "counting": "outgoing_only",
+                "window": "calendar month"}
+}
+```
+
 ### Prompts
 
 | Prompt | Arguments | Purpose |

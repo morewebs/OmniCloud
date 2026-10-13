@@ -267,3 +267,44 @@ export interface BillingAccountRow {
   supported: boolean;
   low_balance_threshold: string | null;
 }
+
+// ---- traffic hooks (server/hooks.py) ----
+
+/** A traffic-allowance webhook. Header VALUES are secret - only their
+ *  names ever reach the client. */
+export interface HookRow {
+  id: number;
+  name: string;
+  url: string;
+  events: ('warn' | 'over')[];
+  warn_pct: number;
+  adapter: string | null;
+  account_id: number | null;
+  provider_id: string | null;
+  header_names: string[];
+  extra: Record<string, unknown> | null;
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
+  last_delivery: {
+    event: string;
+    status: 'delivered' | 'failed';
+    response_status: number | null;
+    error: string | null;
+    created_at: string;
+  } | null;
+}
+
+export interface HookDeliveryRow {
+  id: number;
+  hook_id: number;
+  hook_name: string | null;
+  event: string;           // warn | over | test
+  account_id: number;
+  provider_id: string;
+  server_name: string | null;
+  status: 'delivered' | 'failed';
+  response_status: number | null;
+  error: string | null;
+  created_at: string;
+}

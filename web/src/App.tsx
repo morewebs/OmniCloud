@@ -115,6 +115,10 @@ function Shell({ user, themeMode, onToggleTheme }: {
       qc.invalidateQueries({ queryKey: ['orders'] });          // awaiting_payment settles here
     }
     if (ev === 'action') qc.invalidateQueries({ queryKey: ['ip'] });
+    if (ev === 'hook_delivered') {
+      qc.invalidateQueries({ queryKey: ['hooks'] });
+      qc.invalidateQueries({ queryKey: ['hook-deliveries'] });
+    }
     if (ev === 'order') {
       qc.invalidateQueries({ queryKey: ['orders'] });
       qc.invalidateQueries({ queryKey: ['overview'] });        // recent orders card

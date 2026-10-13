@@ -68,7 +68,7 @@ def test_v3_database_migrates_to_v4_keeping_order_history(tmp_path, monkeypatch)
     db.init()
     with db.connect() as conn:
         assert conn.execute("SELECT value FROM settings WHERE key='schema_version'"
-                            ).fetchone()[0] == "4"
+                            ).fetchone()[0] == str(db.SCHEMA_VERSION)
         # the rebuild kept the order AND its events (FK cascade must not fire)
         o = conn.execute("SELECT * FROM orders WHERE id=1").fetchone()
         assert o["status"] == "provisioned" and o["kind"] == "server"
@@ -83,10 +83,10 @@ def test_v3_database_migrates_to_v4_keeping_order_history(tmp_path, monkeypatch)
     db.init()  # idempotent: a second boot is a no-op
 
 
-def test_fresh_database_is_v4():
+def test_fresh_database_is_current():
     with db.connect() as conn:
         assert conn.execute("SELECT value FROM settings WHERE key='schema_version'"
-                            ).fetchone()[0] == "4"
+                            ).fetchone()[0] == str(db.SCHEMA_VERSION)
 
 
 # -- credentials ---------------------------------------------------------------

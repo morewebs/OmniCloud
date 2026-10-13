@@ -79,3 +79,13 @@ echo "still filtered after 5 changes" >&2; exit 1
 | Netlen | — | — | The API can add an IP but not release one, so changes would only pile up IPs. Not offered. |
 
 A newly attached IP may need OS-side configuration before it answers: a hot-plugged interface on Gcore Cloud, the floating IP added to the interface on Hetzner, or on Gcore Hosting the address plus a source route via its own `gateway`. Bring the address up before you test it - from your script, or from the server itself polling `GET /api/ips/{primary}` with an `ip_read` token.
+
+## IP roles (0.6.0)
+
+A server running **two swap loops** needs each loop to know which extra IP is its own; the provider only says "extra IP". A **role** is your label for one extra IP, and it survives a swap:
+
+- Assign: `PUT /api/servers/{account_id}/{provider_id}/roles` with `{"role": "grpc-entry", "address": "203.0.113.11"}` (admin). The address must be one of that server's current IPs.
+- Read: `GET /api/servers/{account_id}/{provider_id}/roles/{role}` (any user), or see every address's role in the `ips` list of `GET /api/ips/{ip}` (the `ip_read` answer carries `role` on each entry).
+- On a successful change, the role row is re-keyed from the old address to the new one automatically - the loop that holds an `ip_read` token just reads its role's address each round.
+
+Roles live in OmniCloud's own database, not at the provider. A role whose address was released outside this API (a manual panel change) goes stale: `GET /api/ips/{old}` answers 404 and the role read returns the stale address until re-assigned.

@@ -10,8 +10,8 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from . import (accounts, audit, auth, billing, catalog, config, db, ips, orders, roles,
-               secrets, sync, update, version)
+from . import (accounts, audit, auth, billing, catalog, config, db, hooks, ips, orders,
+               roles, secrets, sync, update, version)
 from .adapters.base import Capability
 
 router = APIRouter(prefix="/api")
@@ -1021,6 +1021,98 @@ def put_settings(body: dict, user: auth.User = Depends(auth.require_admin)):
         db.set_setting(k, str(v))
     audit.record(user.id, "settings.update", "settings")
     return {"ok": True}
+
+
+# -- traffic hooks ---------------------------------------------------------------
+# Webhooks fired when a server's traffic allowance crosses a threshold;
+# evaluation rides the sync loop, delivery is admin-configured here.
+# Header values are secrets: never returned by any route (names only).
+
+class HookBody(BaseModel):
+    name: str = Field(min_length=1)
+    url: str = Field(min_length=1)
+    events: list[str] = ["warn", "over"]
+    warn_pct: float = Field(default=80, ge=1, le=100)
+    adapter: str | None = None
+    account_id: int | None = None
+    provider_id: str | None = None
+    headers: dict[str, str] | None = None
+    extra: dict | None = None
+
+
+class HookPatch(BaseModel):
+    name: str | None = Field(default=None, min_length=1)
+    url: str | None = Field(default=None, min_length=1)
+    events: list[str] | None = None
+    warn_pct: float | None = Field(default=None, ge=1, le=100)
+    adapter: str | None = None
+    account_id: int | None = None
+    provider_id: str | None = None
+    # null clears the filter; send nothing to keep it
+    headers: dict[str, str] | None = None
+    extra: dict | None = None
+    enabled: bool | None = None
+
+
+@router.get("/hooks")
+def hooks_list(user: auth.User = Depends(auth.require_admin)):
+    return hooks.list_hooks()
+
+
+@router.post("/hooks")
+def hooks_create(body: HookBody, user: auth.User = Depends(auth.require_admin)):
+    try:
+        hook_id = hooks.create_hook(body.name, body.url, body.events, body.warn_pct,
+                                    body.adapter, body.account_id, body.provider_id,
+                                    body.headers, body.extra)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    audit.record(user.id, "hook.create", f"hook/{body.name}")
+    return {"id": hook_id}
+
+
+@router.patch("/hooks/{hook_id}")
+def hooks_patch(hook_id: int, body: HookPatch,
+                user: auth.User = Depends(auth.require_admin)):
+    patch = {k: v for k, v in body.model_dump().items() if v is not None}
+    try:
+        hooks.update_hook(hook_id, patch)
+    except KeyError:
+        raise HTTPException(404, "no such hook")
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    audit.record(user.id, "hook.update", f"hook/{hook_id}")
+    return {"ok": True}
+
+
+@router.delete("/hooks/{hook_id}")
+def hooks_delete(hook_id: int, user: auth.User = Depends(auth.require_admin)):
+    if not hooks.delete_hook(hook_id):
+        raise HTTPException(404, "no such hook")
+    audit.record(user.id, "hook.delete", f"hook/{hook_id}")
+    return {"ok": True}
+
+
+@router.post("/hooks/{hook_id}/test")
+async def hooks_test(hook_id: int, user: auth.User = Depends(auth.require_admin)):
+    """One real POST with event "test": never arms, safe to repeat. The first
+    cached server matching the hook's filters is the sample (or a synthetic
+    one when nothing matches)."""
+    hook = hooks.get_hook(hook_id)
+    if not hook:
+        raise HTTPException(404, "no such hook")
+    result = await hooks.send_test(hook)
+    audit.record(user.id, "hook.test", f"hook/{hook['name']}")
+    if result["status"] != "delivered":
+        detail = result["error"] or f"HTTP {result['response_status']}"
+        raise HTTPException(502, f"hook delivery failed: {detail}")
+    return {"ok": True, "delivery": result}
+
+
+@router.get("/hooks/deliveries")
+def hooks_deliveries(hook_id: int | None = None, limit: int = 100,
+                     user: auth.User = Depends(auth.require_admin)):
+    return hooks.list_deliveries(hook_id, limit)
 
 
 # -- SSE ---------------------------------------------------------------------------

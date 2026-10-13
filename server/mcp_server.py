@@ -621,6 +621,116 @@ async def list_audit_log(ctx: Context) -> dict:
     return {"entries": await _call(ctx, api.list_audit)}
 
 
+# -- traffic hooks -------------------------------------------------------------------
+# Webhooks that POST when a server's traffic allowance crosses a threshold.
+# They fire from the panel's own sync loop; these tools configure them.
+
+@mcp.tool(annotations=READ)
+async def list_hooks(ctx: Context) -> dict:
+    """Admin. Traffic-allowance hooks: URL, events (warn/over), warn %,
+    filters, enabled, last delivery. Header values are secret - only their
+    names come back."""
+    return {"hooks": await _call(ctx, api.hooks_list)}
+
+
+@mcp.tool(annotations=WRITE)
+async def create_hook(
+        ctx: Context,
+        name: Annotated[str, Field(min_length=1)],
+        url: Annotated[str, Field(description="http(s) URL the event is POSTed to")],
+        events: Annotated[list[str], Field(description=(
+            "Which crossings fire: 'warn' (used >= warn_pct, default 80) and/or "
+            "'over' (used >= 100%). Default both"))] = ["warn", "over"],
+        warn_pct: Annotated[float, Field(ge=1, le=100)] = 80,
+        adapter: Annotated[str | None, Field(description=(
+            "Only servers of this provider (list_adapters)"))] = None,
+        account_id: AccountId | None = None,
+        provider_id: Annotated[str | None, Field(description=(
+            "Only this server"))] = None,
+        headers: Annotated[dict[str, str] | None, Field(description=(
+            "Custom headers e.g. {\"Authorization\": \"Bearer ...\"}. Secret: "
+            "stored, sent, never returned"))] = None,
+        extra: Annotated[dict[str, Any] | None, Field(description=(
+            "Merged into the delivered JSON payload (its keys win)"))] = None,
+) -> dict:
+    """Admin. Create a hook that POSTs when a server's traffic allowance
+    crosses a threshold. Payload: {event: allowance_warn|allowance_over,
+    hook, fired_at, server: {account_id, provider_id, name, adapter, ipv4},
+    allowance: {used_bytes, included_bytes, pct, counting, window, ...}}.
+    Fires once per upward crossing, re-arms when usage drops back below."""
+    return await _call(ctx, api.hooks_create, body=api.HookBody(
+        name=name, url=url, events=events, warn_pct=warn_pct, adapter=adapter,
+        account_id=account_id, provider_id=provider_id, headers=headers, extra=extra))
+
+
+@mcp.tool(annotations=IDEMPOTENT)
+async def update_hook(ctx: Context, hook_id: int,
+                      name: Annotated[str | None, Field(min_length=1)] = None,
+                      url: str | None = None,
+                      events: Annotated[list[str] | None, Field(description=(
+                          "The complete new set: 'warn' and/or 'over'"))] = None,
+                      warn_pct: Annotated[float | None, Field(ge=1, le=100)] = None,
+                      adapter: str | None = None,
+                      account_id: AccountId | None = None,
+                      provider_id: str | None = None,
+                      headers: Annotated[dict[str, str] | None, Field(description=(
+                          "The complete new header set; {} clears"))] = None,
+                      extra: Annotated[dict[str, Any] | None, Field(description=(
+                          "The complete new extra object; {} clears"))] = None,
+                      enabled: bool | None = None) -> dict:
+    """Admin. Update a hook. Absent keys keep their value; a null-ish value
+    (empty string, {}) clears a filter. url here is the hook's target URL."""
+    patch: dict[str, Any] = {}
+    if name is not None:
+        patch["name"] = name
+    if url is not None:
+        patch["url"] = url
+    if events is not None:
+        patch["events"] = events
+    if warn_pct is not None:
+        patch["warn_pct"] = warn_pct
+    if adapter is not None:
+        patch["adapter"] = adapter or ""
+    if account_id is not None:
+        patch["account_id"] = account_id
+    if provider_id is not None:
+        patch["provider_id"] = provider_id or ""
+    if headers is not None:
+        patch["headers"] = headers
+    if extra is not None:
+        patch["extra"] = extra
+    if enabled is not None:
+        patch["enabled"] = enabled
+    return await _call(ctx, api.hooks_patch, hook_id=hook_id,
+                       body=api.HookPatch(**patch))
+
+
+@mcp.tool(annotations=DESTRUCTIVE)
+async def delete_hook(ctx: Context, hook_id: int) -> dict:
+    """Admin. IRREVERSIBLE: delete a hook and its delivery history. Confirm
+    with the human (naming the hook) before calling."""
+    return await _call(ctx, api.hooks_delete, hook_id=hook_id)
+
+
+@mcp.tool(annotations=WRITE)
+async def test_hook(ctx: Context, hook_id: int) -> dict:
+    """Admin. Send one real test POST (event "test") to the hook's URL now:
+    the first cached server matching its filters as sample data. Never arms,
+    safe to repeat. Reports delivered or the HTTP/network error."""
+    return await _call(ctx, api.hooks_test, hook_id=hook_id)
+
+
+@mcp.tool(annotations=READ)
+async def list_hook_deliveries(
+        ctx: Context,
+        hook_id: Annotated[int | None, Field(description="Only this hook")] = None,
+        limit: Annotated[int, Field(ge=1, le=500)] = 100) -> dict:
+    """Admin. Delivery log: warn/over/test per hook and server, delivered or
+    failed, HTTP status, error text - the evidence trail for a hook that
+    seems silent."""
+    return await _call(ctx, api.hooks_deliveries, hook_id=hook_id, limit=limit)
+
+
 # -- prompts -----------------------------------------------------------------------
 
 @mcp.prompt()

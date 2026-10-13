@@ -298,6 +298,18 @@ def test_rest_crud_and_secret_hygiene(app):
     # sign back in as admin (the fixture re-login happens at teardown; do it now)
     c.post("/api/auth/login", json={"username": "admin", "password": "pw123456"},
            headers=HDRS)
+    # a viewer session is refused on every hooks route (read AND write)
+    c.post("/api/auth/logout", headers=HDRS)
+    c.post("/api/auth/login", json={"username": "view", "password": "pw123456"},
+           headers=HDRS)
+    for method, path in (("get", "/api/hooks"), ("post", "/api/hooks"),
+                        ("patch", "/api/hooks/1"), ("delete", "/api/hooks/1"),
+                        ("post", "/api/hooks/1/test"),
+                        ("get", "/api/hooks/deliveries")):
+        assert getattr(c, method)(path, headers=HDRS).status_code == 403, path
+    c.post("/api/auth/logout", headers=HDRS)
+    c.post("/api/auth/login", json={"username": "admin", "password": "pw123456"},
+           headers=HDRS)
     # create
     r = c.post("/api/hooks", json={"name": "ops", "url": "https://cb.example.test/x",
                                    "headers": {"Authorization": SECRET},
@@ -324,6 +336,16 @@ def test_rest_crud_and_secret_hygiene(app):
     assert r.status_code == 200
     listed = c.get("/api/hooks", headers=HDRS).json()[0]
     assert listed["warn_pct"] == 90 and listed["header_names"] == []
+    # an explicit null CLEARS a filter (an unset key keeps it): set one,
+    # then clear it the way the edit dialog does
+    c.patch(f"/api/hooks/{hook_id}", json={"adapter": "hetzner",
+                                           "provider_id": "srv-7"}, headers=HDRS)
+    listed = c.get("/api/hooks", headers=HDRS).json()[0]
+    assert listed["adapter"] == "hetzner" and listed["provider_id"] == "srv-7"
+    c.patch(f"/api/hooks/{hook_id}", json={"adapter": None,
+                                           "provider_id": None}, headers=HDRS)
+    listed = c.get("/api/hooks", headers=HDRS).json()[0]
+    assert listed["adapter"] is None and listed["provider_id"] is None
     # 404s
     assert c.patch("/api/hooks/99", json={"warn_pct": 90},
                    headers=HDRS).status_code == 404

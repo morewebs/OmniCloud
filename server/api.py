@@ -1074,7 +1074,11 @@ def hooks_create(body: HookBody, user: auth.User = Depends(auth.require_admin)):
 @router.patch("/hooks/{hook_id}")
 def hooks_patch(hook_id: int, body: HookPatch,
                 user: auth.User = Depends(auth.require_admin)):
-    patch = {k: v for k, v in body.model_dump().items() if v is not None}
+    # exclude_unset: only keys the caller actually SENT. An explicit null
+    # (adapter/account_id/provider_id) must reach update_hook to clear the
+    # filter - a plain `if v is not None` filter would drop it and silently
+    # keep the old value.
+    patch = body.model_dump(exclude_unset=True)
     try:
         hooks.update_hook(hook_id, patch)
     except KeyError:
@@ -1105,7 +1109,11 @@ async def hooks_test(hook_id: int, user: auth.User = Depends(auth.require_admin)
     audit.record(user.id, "hook.test", f"hook/{hook['name']}")
     if result["status"] != "delivered":
         detail = result["error"] or f"HTTP {result['response_status']}"
-        raise HTTPException(502, f"hook delivery failed: {detail}")
+        # 502 so REST clients see the failure; the delivery result rides
+        # along inline (and `detail` keeps the UI's error toast readable)
+        return JSONResponse(
+            {"detail": f"hook delivery failed: {detail}", "ok": False,
+             "delivery": result}, status_code=502)
     return {"ok": True, "delivery": result}
 
 

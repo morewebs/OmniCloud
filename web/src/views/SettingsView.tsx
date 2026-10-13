@@ -437,9 +437,11 @@ function TrafficHooksPanel({ onToast }: { onToast: (m: string, s?: 'success' | '
   const extraValue = extra.ok ? extra.value : null;
   const headerObject = Object.fromEntries(
     form.headerRows.filter(r => r.k.trim() && r.v.trim()).map(r => [r.k.trim(), r.v]));
-  const urlOk = /^https?:\/\/.+\..+/.test(form.url) || /^https?:\/\/\[?[0-9a-fA-F:.]+\]?(:\d+)?/.test(form.url);
+  // mirrors the server's urlsplit rule (scheme + netloc) as early feedback;
+  // the server rejects what slips past this
+  const urlOk = /^https?:\/\/[^/\s]+/.test(form.url);
   const invalid = !form.name.trim() || !urlOk || !form.warn || !form.over
-    ? false : !(Number.isFinite(pct) && pct >= 1 && pct <= 100) || !extra.ok;
+    || !(Number.isFinite(pct) && pct >= 1 && pct <= 100) || !extra.ok;
 
   const submit = async () => {
     setBusy(true); setFormError(null);
